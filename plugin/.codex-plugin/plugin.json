@@ -1,0 +1,17 @@
+{
+  "name": "codex-workflow",
+  "version": "0.1.1",
+  "description": "先确认角色与阶段，再用 Codex 原生子代理执行，并在会话内查看动态进度。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "J-codex-workflow",
+    "shortDescription": "自定义角色、原生子代理与会话内动态工作流看板",
+    "developerName": "Local Workflow",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

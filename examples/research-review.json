@@ -1,0 +1,63 @@
+{
+  "title": "调研并评审",
+  "goal": "形成有来源依据、经过独立复核的建议，并说明不确定性",
+  "roles": [
+    {
+      "id": "researcher",
+      "name": "调研员",
+      "kind": "native",
+      "instructions": "针对分配的问题查找高质量一手材料，区分事实与推断，记录可核查来源、日期和未解决的不确定性。只提交研究结果与来源引用，不替主代理作最终结论。"
+    },
+    {
+      "id": "reviewer",
+      "name": "独立评审员",
+      "kind": "native",
+      "instructions": "独立检查研究结果中的关键主张、来源是否支持主张、反例与遗漏。给出通过或不通过及具体依据，不改写或代替主代理验收。"
+    },
+    {
+      "id": "lead",
+      "name": "主代理",
+      "kind": "primary",
+      "instructions": "整合已验收的调研与评审结果，核对验收条件并交付建议。"
+    }
+  ],
+  "phases": [
+    {"id": "research", "name": "并行调研"},
+    {"id": "review", "name": "独立复核"},
+    {"id": "synthesis", "name": "主代理综合"}
+  ],
+  "tasks": [
+    {
+      "id": "research_options",
+      "name": "核查可选方案与依据",
+      "roleId": "researcher",
+      "phaseId": "research",
+      "dependsOn": [],
+      "acceptanceCriteria": "提交至少两个可比较方案；每个关键事实都有可打开的来源引用，事实和推断分开，并列出证据缺口。"
+    },
+    {
+      "id": "research_risks",
+      "name": "核查风险与反例",
+      "roleId": "researcher",
+      "phaseId": "research",
+      "dependsOn": [],
+      "acceptanceCriteria": "列出与目标相关的主要风险、反例或限制；每项有依据或明确标为待验证假设。"
+    },
+    {
+      "id": "review_evidence",
+      "name": "复核研究证据",
+      "roleId": "reviewer",
+      "phaseId": "review",
+      "dependsOn": ["research_options", "research_risks"],
+      "acceptanceCriteria": "逐项检查关键主张和来源支持度；明确给出通过或不通过，且不通过时指出具体缺口。"
+    },
+    {
+      "id": "deliver_recommendation",
+      "name": "形成并验收建议",
+      "roleId": "lead",
+      "phaseId": "synthesis",
+      "dependsOn": ["review_evidence"],
+      "acceptanceCriteria": "建议回答原始目标，比较方案与取舍，纳入通过复核的证据，并说明不确定性和未覆盖事项。"
+    }
+  ]
+}

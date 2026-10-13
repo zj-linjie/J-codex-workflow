@@ -1,0 +1,55 @@
+{
+  "title": "实现并独立复核",
+  "goal": "完成用户要求的代码变更，并由独立代理检查差异与验证证据",
+  "roles": [
+    {
+      "id": "implementer",
+      "name": "实现代理",
+      "kind": "native",
+      "instructions": "先检查仓库约定与现有实现，再完成分配的代码变更。提交修改文件清单、关键实现说明、运行过的验证命令及其真实结果；不要声称未运行的检查通过。"
+    },
+    {
+      "id": "reviewer",
+      "name": "独立复核代理",
+      "kind": "native",
+      "instructions": "读取实际工作区差异并对照用户目标复核正确性、边界情况和回归风险。按严重度列出具体问题及文件位置；若没有发现问题，说明检查范围和未验证事项。不要修改代码。"
+    },
+    {
+      "id": "lead",
+      "name": "主代理",
+      "kind": "primary",
+      "instructions": "亲自检查最终工作区和复核结论，决定是否符合验收标准，并汇报实际验证结果。"
+    }
+  ],
+  "phases": [
+    {"id": "implementation", "name": "实现变更"},
+    {"id": "review", "name": "独立复核"},
+    {"id": "acceptance", "name": "主代理验收"}
+  ],
+  "tasks": [
+    {
+      "id": "implement_change",
+      "name": "实现用户要求的变更",
+      "roleId": "implementer",
+      "phaseId": "implementation",
+      "dependsOn": [],
+      "acceptanceCriteria": "目标行为已实现；变更文件和验证命令如实列出；未运行的检查明确标记为未验证。"
+    },
+    {
+      "id": "review_change",
+      "name": "检查实现差异",
+      "roleId": "reviewer",
+      "phaseId": "review",
+      "dependsOn": ["implement_change"],
+      "acceptanceCriteria": "检查实际差异并给出可定位的问题或明确的无发现结论；严重阻塞项及未验证风险清楚列出。"
+    },
+    {
+      "id": "accept_change",
+      "name": "主代理核对并交付",
+      "roleId": "lead",
+      "phaseId": "acceptance",
+      "dependsOn": ["review_change"],
+      "acceptanceCriteria": "主代理已读取实现产物并逐条处理复核结果；最终说明变更、实际验证、未解决事项，且不把子代理返回当作验收通过。"
+    }
+  ]
+}

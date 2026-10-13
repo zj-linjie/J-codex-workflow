@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-2BLCp1sFqaxRe4SDfOjeX6KCMmB5ZCH1I/HtTr5Ud0s='; style-src 'sha256-v7uWrouDT+zIwR0WP/HsnroWWlPZUyr3RVEoi9ZjBxk='; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>J-codex-workflow</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+      font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      --canvas: #202124;
+      --card: #28292c;
+      --card-quiet: #303236;
+      --line: #414348;
+      --text: #eceef0;
+      --muted: #a3a6ad;
+      --faint: #7d8189;
+      --accent: #77cdb4;
+      --accent-ink: #173d34;
+      --warn: #e8c477;
+      --warn-ink: #483716;
+      --danger: #ef9894;
+      --danger-ink: #4a2424;
+      --blue: #9ebcff;
+      --blue-ink: #243552;
+      --shadow: 0 8px 28px #0002;
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --canvas: #f5f6f8;
+      --card: #fff;
+      --card-quiet: #f4f5f7;
+      --line: #dfe2e7;
+      --text: #23262c;
+      --muted: #626874;
+      --faint: #7e8490;
+      --accent: #176f5a;
+      --accent-ink: #e4f5ef;
+      --warn: #805b0c;
+      --warn-ink: #fff2cf;
+      --danger: #a63232;
+      --danger-ink: #fde9e8;
+      --blue: #315f9d;
+      --blue-ink: #e9f0ff;
+      --shadow: 0 8px 28px #18243a12;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme]) {
+        --canvas: #f5f6f8;
+        --card: #fff;
+        --card-quiet: #f4f5f7;
+        --line: #dfe2e7;
+        --text: #23262c;
+        --muted: #626874;
+        --faint: #7e8490;
+        --accent: #176f5a;
+        --accent-ink: #e4f5ef;
+        --warn: #805b0c;
+        --warn-ink: #fff2cf;
+        --danger: #a63232;
+        --danger-ink: #fde9e8;
+        --blue: #315f9d;
+        --blue-ink: #e9f0ff;
+        --shadow: 0 8px 28px #18243a12;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 10px; color: var(--text); background: transparent; }
+    .board { max-width: 1440px; margin: 0 auto; border: 1px solid var(--line); border-radius: 14px; padding: 15px; background: var(--canvas); box-shadow: var(--shadow); }
+    .topline { display: flex; align-items: flex-start; gap: 12px; }
+    .heading { min-width: 0; flex: 1; }
+    h1 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 650; overflow-wrap: anywhere; }
+    .goal { color: var(--muted); font-size: 12px; margin-top: 3px; max-width: 920px; overflow-wrap: anywhere; }
+    .run-badge { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 4px 9px; border-radius: 999px; color: var(--muted); background: var(--card-quiet); border: 1px solid var(--line); font-size: 11px; font-weight: 620; white-space: nowrap; }
+    .run-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .run-running { color: var(--accent); }
+    .run-paused, .run-draft { color: var(--warn); }
+    .run-completed { color: var(--accent); }
+    .run-cancelled { color: var(--muted); }
+    .summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin-top: 11px; min-height: 24px; }
+    .run-note { color: var(--muted); font-size: 11px; }
+    .counts { color: var(--faint); font-size: 11px; margin-left: auto; }
+    .banner { margin-top: 12px; padding: 8px 10px; border-radius: 9px; background: var(--card-quiet); color: var(--muted); font-size: 11px; }
+    .banner[hidden] { display: none; }
+    .banner[data-kind="warn"] { color: var(--warn); }
+    .banner[data-kind="error"] { color: var(--danger); }
+    .track-wrap { margin: 14px -2px 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+    .track-wrap:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 8px; }
+    .track { display: flex; align-items: stretch; gap: 22px; width: max-content; min-width: 100%; margin: 0; padding: 2px 2px 10px; list-style: none; }
+    .phase { position: relative; width: clamp(250px, 28vw, 330px); min-height: 128px; border: 1px solid var(--line); border-radius: 12px; padding: 11px; background: var(--card); }
+    .phase:not(:last-child)::after { position: absolute; content: "›"; top: 12px; right: -18px; width: 14px; color: var(--faint); font-size: 22px; line-height: 1; text-align: center; }
+    .phase-head { display: flex; align-items: baseline; gap: 7px; min-width: 0; margin-bottom: 9px; }
+    .phase-index { color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .phase-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+    .phase-progress { color: var(--faint); font-size: 10px; white-space: nowrap; }
+    .task-list { display: grid; gap: 7px; }
+    .task { min-width: 0; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 9px; background: var(--card-quiet); overflow: hidden; }
+    .task.status-running { border-left-color: var(--accent); }
+    .task.status-submitted { border-left-color: var(--warn); }
+    .task.status-done { border-left-color: var(--accent); }
+    .task.status-failed { border-left-color: var(--danger); }
+    .task.status-cancelled { border-left-color: var(--faint); }
+    .task-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 8px; padding: 8px 9px; cursor: pointer; list-style: none; }
+    .task-summary::-webkit-details-marker { display: none; }
+    .task-summary:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; border-radius: 8px; }
+    .task-name-wrap { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
+    .task-dot { width: 7px; height: 7px; flex: 0 0 7px; margin-top: 5px; border-radius: 50%; background: var(--faint); }
+    .status-running .task-dot, .status-done .task-dot { background: var(--accent); }
+    .status-submitted .task-dot, .status-pending .task-dot { background: var(--warn); }
+    .status-failed .task-dot { background: var(--danger); }
+    .task-name { font-size: 11px; font-weight: 620; overflow-wrap: anywhere; }
+    .task-status { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .status-running .task-status, .status-done .task-status { color: var(--accent); }
+    .status-submitted .task-status, .status-pending .task-status { color: var(--warn); }
+    .status-failed .task-status { color: var(--danger); }
+    .task-role { grid-column: 1 / -1; padding-left: 14px; color: var(--faint); font-size: 10px; overflow-wrap: anywhere; }
+    .task-brief { padding: 0 9px 8px 23px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+    .task[open] .task-summary { padding-bottom: 6px; }
+    .task-detail { display: grid; gap: 7px; padding: 0 10px 10px 23px; }
+    .detail-field { min-width: 0; }
+    .detail-label { display: block; color: var(--faint); font-size: 10px; }
+    .detail-value { margin-top: 1px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .artifact-list { display: grid; gap: 3px; margin: 3px 0 0; padding: 0; list-style: none; }
+    .artifact-list li { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+    .empty { color: var(--faint); font-size: 11px; padding: 8px 2px; }
+    .footer { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 12px; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 10px; color: var(--faint); font-size: 10px; }
+    .live { color: var(--accent); }
+    .disconnected { color: var(--danger); }
+    .stale { color: var(--warn); }
+    .loading[hidden] { display: none; }
+    .loading { min-height: 84px; display: grid; place-items: center; color: var(--muted); text-align: center; }
+    .loading strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    @keyframes breathe { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent); } }
+    .run-running::before { animation: breathe 1.6s ease-in-out infinite; }
+    @media (max-width: 560px) {
+      body { padding: 6px; }
+      .board { padding: 12px; border-radius: 12px; }
+      .topline { gap: 8px; }
+      .run-badge { font-size: 10px; padding: 4px 7px; }
+      .phase { width: 260px; }
+      .counts { margin-left: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="board" aria-labelledby="workflow-title">
+    <header>
+      <div class="topline">
+        <div class="heading">
+          <h1 id="workflow-title">J-codex-workflow</h1>
+          <div id="goal" class="goal" hidden></div>
+        </div>
+        <span id="run-status" class="run-badge" aria-label="工作流状态">等待连接</span>
+      </div>
+      <div class="summary-row">
+        <span id="run-note" class="run-note">等待当前工作流入口提供运行信息</span>
+        <span id="counts" class="counts"></span>
+      </div>
+    </header>
+    <div id="banner" class="banner" role="status" aria-live="polite">正在连接 MCP 宿主…</div>
+    <section class="track-wrap" tabindex="0" aria-label="工作流阶段轨道">
+      <ol id="phases" class="track" aria-label="工作流阶段"></ol>
+    </section>
+    <div id="loading" class="loading"><div><strong>等待工作流信息</strong><span>此卡片只读取与当前入口绑定的运行。</span></div></div>
+    <footer class="footer">
+      <span id="connection" class="live" role="status" aria-live="polite">正在初始化宿主连接</span>
+      <span id="freshness">尚未同步状态</span>
+    </footer>
+  </main>
+  <script>
+    (() => {
+      "use strict";
+      const POLL_MS = 1500;
+      const RPC_TIMEOUT_MS = 10000;
+      const STALE_AFTER_MS = 6000;
+      const $ = (id) => document.getElementById(id);
+      const ui = {
+        title: $("workflow-title"), goal: $("goal"), badge: $("run-status"), note: $("run-note"), counts: $("counts"),
+        banner: $("banner"), phases: $("phases"), loading: $("loading"), connection: $("connection"),
+        freshness: $("freshness")
+      };
+      const state = {
+        nextRpcId: 1, pending: new Map(), clientId: "codex-workflow-ui-" + Math.random().toString(36).slice(2, 10),
+        runId: null, run: null, revision: null, observedRevision: null, lastSuccessAt: 0, serverUpdatedAt: "",
+        pollTimer: 0, freshnessTimer: 0, requestInFlight: false, hostReady: false, stopped: false,
+        identityFailed: false, closed: false, lastError: ""
+      };
+      const taskLabels = {
+        pending: "待处理", running: "执行中", submitted: "待验收", done: "已完成", failed: "失败", cancelled: "已取消"
+      };
+      const runLabels = { draft: "待你确认", running: "执行中", paused: "等待你的决定", completed: "已完成", cancelled: "已取消" };
+      const runNotes = {
+        draft: "方案尚待确认；确认前不会派发任务。",
+        running: "工作流正在执行，状态会自动同步。",
+        paused: "工作流已暂停，等待你决定下一步。",
+        completed: "所有任务已验收完成。",
+        cancelled: "此工作流已取消。"
+      };
+
+      function setBanner(message, kind = "info") {
+        ui.banner.hidden = !message;
+        ui.banner.textContent = message || "";
+        ui.banner.dataset.kind = kind;
+      }
+      function setConnection(message, kind = "live") {
+        ui.connection.textContent = message;
+        ui.connection.className = kind;
+      }
+      function rpc(method, params, timeoutMs = RPC_TIMEOUT_MS) {
+        if (state.closed) return Promise.reject(new Error("卡片已关闭"));
+        return new Promise((resolve, reject) => {
+          const id = state.nextRpcId++;
+          const timer = window.setTimeout(() => {
+            state.pending.delete(id);
+            reject(new Error("宿主响应超时"));
+          }, timeoutMs);
+          state.pending.set(id, { resolve, reject, timer });
+          try {
+            parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+          } catch (error) {
+            window.clearTimeout(timer);
+            state.pending.delete(id);
+            reject(error);
+          }
+        });
+      }
+      function notify(method, params) {
+        if (!state.closed) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+      }
+      function resultRun(value) {
+        const candidates = [value?.structuredContent, value?.result?.structuredContent, value?.result, value];
+        for (const candidate of candidates) {
+          if (candidate?.run && typeof candidate.run.id === "string" && candidate.run.id.trim()) return candidate.run;
+        }
+        return null;
+      }
+      function applyHostTheme(value) {
+        const theme = typeof value === "string" ? value : value?.theme;
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      }
+      function onToolResult(params) {
+        if (state.runId || state.closed) return;
+        const knownTool = params?.toolName || params?.name || params?.tool?.name;
+        if (knownTool && knownTool !== "workflow_board") return;
+        const run = resultRun(params);
+        if (!run) return;
+        state.runId = run.id;
+        ui.note.textContent = "已绑定当前工作流；不会切换到其他运行。";
+        setBanner("");
+        startIfReady();
+      }
+      function handleMessage(event) {
+        if (event.source !== parent || !event.data || event.data.jsonrpc !== "2.0") return;
+        const message = event.data;
+        if (message.method === "ui/notifications/tool-result") {
+          onToolResult(message.params);
+          return;
+        }
+        if (message.method === "ui/notifications/host-context-changed") {
+          applyHostTheme(message.params);
+          return;
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "id")) return;
+        const item = state.pending.get(message.id);
+        if (!item) return;
+        state.pending.delete(message.id);
+        window.clearTimeout(item.timer);
+        if (message.error) item.reject(new Error("工作流宿主暂时无法连接"));
+        else item.resolve(message.result);
+      }
+      function addField(parentNode, label, value) {
+        const field = document.createElement("div");
+        field.className = "detail-field";
+        const caption = document.createElement("span");
+        caption.className = "detail-label";
+        caption.textContent = label;
+        const content = document.createElement("div");
+        content.className = "detail-value";
+        content.textContent = value === undefined || value === null || value === "" ? "未提供" : String(value);
+        field.append(caption, content);
+        parentNode.append(field);
+      }
+      function roleName(task, roles) {
+        const role = roles.get(task.roleId);
+        if (!role) return { name: "未指定角色", type: "" };
+        return { name: role.name || role.id || "未命名角色", type: role.kind === "primary" ? "主代理" : "原生子代理" };
+      }
+      function artifactText(item) {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return String(item ?? "");
+        const title = item.name || item.title || item.label || "产物引用";
+        const ref = item.uri || item.path || item.url || item.ref || item.description || "";
+        return ref ? String(title) + " · " + String(ref) : String(title);
+      }
+      function appendArtifacts(parentNode, artifacts) {
+        const field = document.createElement("div");
+        field.className = "detail-field";
+        const caption = document.createElement("span");
+        caption.className = "detail-label";
+        caption.textContent = "产物引用";
+        field.append(caption);
+        const list = document.createElement("ul");
+        list.className = "artifact-list";
+        const entries = Array.isArray(artifacts) ? artifacts : [];
+        if (!entries.length) {
+          const empty = document.createElement("li");
+          empty.textContent = "暂无产物引用";
+          list.append(empty);
+        } else {
+          for (const item of entries) {
+            const row = document.createElement("li");
+            row.textContent = artifactText(item);
+            list.append(row);
+          }
+        }
+        field.append(list);
+        parentNode.append(field);
+      }
+      function taskCard(task, roles) {
+        const status = taskLabels[task.status] ? task.status : "unknown";
+        const role = roleName(task, roles);
+        const details = document.createElement("details");
+        details.className = "task status-" + status;
+        details.dataset.taskId = String(task.id || "");
+        details.dataset.status = status;
+        const summary = document.createElement("summary");
+        summary.className = "task-summary";
+        const nameWrap = document.createElement("span");
+        nameWrap.className = "task-name-wrap";
+        const dot = document.createElement("span");
+        dot.className = "task-dot";
+        dot.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");
+        name.className = "task-name";
+        name.textContent = task.name || task.id || "未命名任务";
+        nameWrap.append(dot, name);
+        const stateLabel = document.createElement("span");
+        stateLabel.className = "task-status";
+        stateLabel.textContent = taskLabels[status];
+        const roleLabel = document.createElement("span");
+        roleLabel.className = "task-role";
+        roleLabel.textContent = role.type ? role.name + " · " + role.type : role.name;
+        summary.append(nameWrap, stateLabel, roleLabel);
+        details.append(summary);
+        const briefText = task.summary || task.message;
+        if (briefText) {
+          const brief = document.createElement("div");
+          brief.className = "task-brief";
+          brief.textContent = briefText;
+          details.append(brief);
+        }
+        const detail = document.createElement("div");
+        detail.className = "task-detail";
+        const roleRecord = roles.get(task.roleId);
+        addField(detail, "角色职责", roleRecord?.instructions || "未提供");
+        addField(detail, "验收标准", task.acceptanceCriteria || "未提供");
+        addField(detail, "原生代理 ID", task.nativeId || (roleRecord?.kind === "primary" ? "主代理任务" : "尚未创建"));
+        addField(detail, "当前进展", task.message || "未提供");
+        addField(detail, "提交摘要", task.summary || "未提交");
+        addField(detail, "验收说明", task.acceptance || "尚未验收");
+        appendArtifacts(detail, task.artifacts);
+        details.append(detail);
+        return details;
+      }
+      function phaseCard(phase, index, tasks, roles) {
+        const item = document.createElement("li");
+        item.className = "phase";
+        const header = document.createElement("div");
+        header.className = "phase-head";
+        const number = document.createElement("span");
+        number.className = "phase-index";
+        number.textContent = String(index + 1).padStart(2, "0");
+        const title = document.createElement("span");
+        title.className = "phase-name";
+        title.textContent = phase.name || phase.id || "未命名阶段";
+        const progress = document.createElement("span");
+        progress.className = "phase-progress";
+        progress.textContent = tasks.filter((task) => task.status === "done").length + " / " + tasks.length + " 完成";
+        header.append(number, title, progress);
+        const list = document.createElement("div");
+        list.className = "task-list";
+        if (!tasks.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.textContent = "此阶段暂无任务";
+          list.append(empty);
+        } else {
+          for (const task of tasks) list.append(taskCard(task, roles));
+        }
+        item.append(header, list);
+        return item;
+      }
+      function formatTime(value) {
+        if (!value) return "未知";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return "未知";
+        return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
+      }
+      function render(run) {
+        const expandedTaskIds = new Set([...ui.phases.querySelectorAll(".task[open][data-task-id]")].map((task) => task.dataset.taskId));
+        const activeElement = document.activeElement;
+        const focusedTask = activeElement && ui.phases.contains(activeElement)
+          ? activeElement.closest(".task[data-task-id]")
+          : null;
+        const focusedTaskId = focusedTask?.dataset.taskId || null;
+        const roles = new Map((Array.isArray(run.roles) ? run.roles : []).map((role) => [role.id, role]));
+        const phases = Array.isArray(run.phases) ? run.phases : [];
+        const tasks = Array.isArray(run.tasks) ? run.tasks : [];
+        ui.title.textContent = run.title || "J-codex-workflow";
+        ui.goal.textContent = run.goal || "";
+        ui.goal.hidden = !run.goal;
+        const status = runLabels[run.status] ? run.status : "unknown";
+        ui.badge.textContent = runLabels[status] || "状态未知";
+        ui.badge.className = "run-badge run-" + status;
+        ui.badge.setAttribute("aria-label", "工作流状态：" + (runLabels[status] || "状态未知"));
+        ui.note.textContent = status === "paused" && run.pauseReason ? "等待你的决定：" + run.pauseReason : (runNotes[status] || "工作流状态暂不可识别。");
+        const doneCount = tasks.filter((task) => task.status === "done").length;
+        ui.counts.textContent = phases.length + " 个阶段 · " + tasks.length + " 个任务 · " + doneCount + " 个已验收";
+        ui.phases.replaceChildren(...phases.map((phase, index) => phaseCard(phase, index, tasks.filter((task) => task.phaseId === phase.id), roles)));
+        for (const task of ui.phases.querySelectorAll(".task[data-task-id]")) {
+          if (expandedTaskIds.has(task.dataset.taskId)) task.open = true;
+        }
+        if (focusedTaskId) {
+          const restoredTask = [...ui.phases.querySelectorAll(".task[data-task-id]")].find((task) => task.dataset.taskId === focusedTaskId);
+          const restoredSummary = restoredTask?.querySelector("summary");
+          if (restoredSummary) restoredSummary.focus({ preventScroll: true });
+        }
+        ui.loading.hidden = true;
+        ui.freshness.className = "";
+        ui.freshness.textContent = "刚刚同步 · 服务端更新 " + formatTime(state.serverUpdatedAt);
+        setBanner("");
+        if (status === "completed" || status === "cancelled") {
+          state.stopped = true;
+          setConnection(status === "completed" ? "已完成 · 自动同步已停止" : "已取消 · 自动同步已停止", "live");
+        } else {
+          setConnection("已连接 · 每约 1.5 秒同步", "live");
+        }
+      }
+      function renderedTasks() {
+        return [...ui.phases.querySelectorAll(".task[data-task-id]")].map((element) => ({
+          id: element.dataset.taskId,
+          status: element.dataset.status
+        }));
+      }
+      async function recordObservation() {
+        if (state.observedRevision === state.revision || state.closed) return;
+        try {
+          const result = await rpc("tools/call", {
+            name: "workflow_observed",
+            arguments: {
+              runId: state.runId,
+              clientId: state.clientId,
+              revision: state.revision,
+              rendered: renderedTasks(),
+              visibility: document.visibilityState
+            }
+          }, 2000);
+          if (result?.isError) return;
+          state.observedRevision = state.revision;
+        } catch (error) {
+          // Rendering receipts are best-effort and never change the displayed run state.
+        }
+      }
+      function resultMessage(result) {
+        if (!result?.isError) return "";
+        return "工作流状态暂时无法读取";
+      }
+      async function pollOnce() {
+        if (state.requestInFlight || state.stopped || state.closed || !state.runId || !state.hostReady) return;
+        state.requestInFlight = true;
+        try {
+          const result = await rpc("tools/call", { name: "workflow_get", arguments: { runId: state.runId } });
+          const message = resultMessage(result);
+          if (message) throw new Error(message);
+          const run = resultRun(result);
+          if (!run) throw new Error("工作流状态暂时无法读取");
+          if (run.id !== state.runId) {
+            state.identityFailed = true;
+            state.stopped = true;
+            setConnection("运行身份校验失败 · 已停止同步", "disconnected");
+            setBanner("返回的运行与此卡片绑定的运行不一致。为保护运行隔离，卡片已停止读取。", "error");
+            return;
+          }
+          setBanner("");
+          state.lastError = "";
+          const changed = state.revision !== run.revision || !state.run;
+          state.lastSuccessAt = Date.now();
+          state.serverUpdatedAt = run.updatedAt || "";
+          if (changed) {
+            state.run = run;
+            state.revision = run.revision;
+            render(run);
+          } else {
+            ui.freshness.className = "";
+            ui.freshness.textContent = "刚刚同步 · 服务端更新 " + formatTime(state.serverUpdatedAt);
+            if (run.status === "completed" || run.status === "cancelled") {
+              state.stopped = true;
+              setConnection(run.status === "completed" ? "已完成 · 自动同步已停止" : "已取消 · 自动同步已停止", "live");
+            } else {
+              setConnection("已连接 · 每约 1.5 秒同步", "live");
+            }
+          }
+          if (state.observedRevision !== state.revision && !state.identityFailed) await recordObservation();
+        } catch (error) {
+          state.lastError = "unavailable";
+          setConnection("状态暂未更新 · 正在自动重试", "disconnected");
+          setBanner(state.run ? "暂时无法更新最新状态，页面保留最近一次读取的数据，正在自动重试。" : "暂时无法读取工作流状态，正在自动重试。", "error");
+          updateFreshness();
+        } finally {
+          state.requestInFlight = false;
+          if (!state.stopped && !state.closed) state.pollTimer = window.setTimeout(pollOnce, POLL_MS);
+        }
+      }
+      function updateFreshness() {
+        if (!state.lastSuccessAt) {
+          ui.freshness.textContent = "尚未同步状态";
+          return;
+        }
+        const age = Math.max(0, Date.now() - state.lastSuccessAt);
+        if (age >= STALE_AFTER_MS && !state.stopped) {
+          ui.freshness.textContent = "状态可能陈旧 · 上次成功同步 " + Math.floor(age / 1000) + " 秒前";
+          ui.freshness.className = "stale";
+          if (!state.lastError) setConnection("等待宿主返回最新状态", "stale");
+        } else {
+          ui.freshness.textContent = "最近读取 " + formatTime(new Date(state.lastSuccessAt).toISOString()) + " · 服务端更新 " + formatTime(state.serverUpdatedAt);
+          ui.freshness.className = "";
+        }
+      }
+      function startIfReady() {
+        if (!state.hostReady || !state.runId || state.stopped || state.closed || state.requestInFlight || state.pollTimer) return;
+        pollOnce();
+      }
+      async function initializeHost() {
+        if (state.closed || state.hostReady) return;
+        if (parent === window) {
+          setConnection("需要 MCP 宿主", "disconnected");
+          setBanner("请从 J-codex-workflow 卡片入口打开此看板。", "error");
+          return;
+        }
+        try {
+          const host = await rpc("ui/initialize", {
+            appInfo: { name: "codex-workflow-board", version: "0.1.1" },
+            appCapabilities: {},
+            protocolVersion: "2026-01-26"
+          });
+          applyHostTheme(host?.hostContext?.theme || host?.theme);
+          state.hostReady = true;
+          notify("ui/notifications/initialized", {});
+          setConnection("宿主已连接", "live");
+          if (state.runId) {
+            ui.note.textContent = "已绑定当前工作流；不会切换到其他运行。";
+            setBanner("");
+            startIfReady();
+          } else {
+            ui.note.textContent = "等待当前工作流入口提供运行信息。";
+            setBanner("等待此卡片的工作流入口返回运行信息；不会读取最近运行或其他运行。");
+          }
+        } catch (error) {
+          setConnection("暂时无法连接 · 正在重试", "disconnected");
+          setBanner("暂时无法连接工作流宿主，正在自动重试。", "error");
+          if (!state.closed) state.pollTimer = window.setTimeout(() => {
+            state.pollTimer = 0;
+            initializeHost();
+          }, POLL_MS);
+        }
+      }
+      function cleanup() {
+        if (state.closed) return;
+        state.closed = true;
+        window.clearTimeout(state.pollTimer);
+        window.clearInterval(state.freshnessTimer);
+        window.removeEventListener("message", handleMessage);
+        for (const [id, item] of state.pending) {
+          window.clearTimeout(item.timer);
+          item.reject(new Error("卡片已关闭"));
+          state.pending.delete(id);
+        }
+      }
+
+      window.addEventListener("message", handleMessage);
+      window.addEventListener("pagehide", cleanup, { once: true });
+      state.freshnessTimer = window.setInterval(updateFreshness, 1000);
+      setConnection("正在初始化宿主连接", "live");
+      initializeHost();
+    })();
+  </script>
+</body>
+</html>
