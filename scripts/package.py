@@ -17,7 +17,7 @@ def build(output):
         raise ValueError('Use the project dist directory or an external output directory')
     package = output / 'marketplace' / 'plugins' / 'codex-workflow'
     source = ROOT / 'plugin'
-    required = ['.codex-plugin/plugin.json', 'mcp/server.py', 'mcp/store.py',
+    required = ['.codex-plugin/plugin.json', 'mcp/server.py', 'mcp/store.py', 'mcp/usage.py',
                 'ui/board.html', 'skills/codex-workflow/SKILL.md',
                 'scripts/install_agents.py', 'scripts/escalation_policy.py',
                 'settings/orchestrator.json']

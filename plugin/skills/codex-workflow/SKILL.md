@@ -13,6 +13,8 @@ Translate the user's goal into roles, ordered phases, tasks, dependencies, expec
 
 Bind every newly drafted native role to an explicit `agentType` available in the current spawn interface. Normally use WorkflowExplorer, WorkflowExecutor, WorkflowReviewer, or WorkflowExpertAdvisor. Keep the business-facing name task-specific. Primary roles have no agentType. A TOML file alone does not prove its role is loaded; resolve missing roles before confirmation, without silently falling back to default.
 
+Before creating a draft, read the current main chat's `CODEX_THREAD_ID` from the execution environment and pass its actual value as `sessionId` to `workflow_create`. This binds completion statistics to the current session tree. If the identity is unavailable, omit sessionId and explain that session statistics will be unavailable; never guess an ID or use the MCP process's inherited identity. The binding remains fixed when editing the draft.
+
 Create a draft with `workflow_create`, then show it with `workflow_board`. Explain the phases, role responsibilities, task order, and acceptance criteria in ordinary language. The run must remain `draft`; do not spawn any workflow subagent before the user confirms that exact plan version. If the user changes the draft, persist it with `workflow_update_draft`, show the new version, and request confirmation again. A prior confirmation never carries over to an edited plan.
 
 On explicit confirmation, call `workflow_confirm` for the current `revision`, with a short summary of the user's actual confirmation. Do not infer confirmation from silence or from an unrelated request to inspect the board.
@@ -49,4 +51,4 @@ When the same unresolved problem reaches the configured failure threshold, read 
 
 Use only the `workflow_*` tools listed in `docs/CONTRACT.md`. If those tools are missing from the current session, do not imitate a successful tool call with a shell command, API, or fabricated status. Tell the user the plugin tools are not loaded and that Codex may need to restart or reload the plugin, then continue only after they are available.
 
-The run is complete only when every task is `done` with an acceptance explanation and the run reports `completed`. Keep `paused`, `cancelled`, and unresolved native-agent states explicit in the handoff.
+The run is complete only when every task is `done` with an acceptance explanation and the run reports `completed`. Keep `paused`, `cancelled`, and unresolved native-agent states explicit in the handoff. On completion, the board calls `workflow_usage` locally once to save a session-tree usage/speed snapshot. If the board is closed, the main agent may call the same tool once for that completed run. Read [session-usage.md](references/session-usage.md) when explaining coverage or missing statistics. Statistics are separate from acceptance and cannot turn a completed workflow into a failure.

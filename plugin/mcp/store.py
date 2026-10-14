@@ -25,6 +25,7 @@ class WorkflowError(Exception):
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_RECENT_EVENTS = 100
 _MAX_RECEIPTS = 200
 
@@ -274,6 +275,14 @@ class Store:
                     at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS receipts_run_seq ON observed_receipts(run_id, seq DESC);
+                CREATE TABLE IF NOT EXISTS run_sessions (
+                    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+                    session_id TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS run_usage (
+                    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+                    usage_json TEXT NOT NULL
+                );
             """)
 
     @staticmethod
@@ -285,6 +294,13 @@ class Store:
         value = _string(run_id, "runId", 128)
         if not _RUN_ID.fullmatch(value):
             raise WorkflowError("runId has an invalid format")
+        return value
+
+    @staticmethod
+    def _session_id(session_id: Any) -> str:
+        value = _string(session_id, "sessionId", 128)
+        if not _SESSION_ID.fullmatch(value):
+            raise WorkflowError("sessionId must be an identifier using letters, digits, dot, underscore, colon, or hyphen")
         return value
 
     @staticmethod
@@ -303,7 +319,14 @@ class Store:
             return None
         if row["operation"] != operation or row["fingerprint"] != fingerprint:
             raise WorkflowError("eventId was already used with different parameters")
-        return json.loads(row["result_json"])
+        result = json.loads(row["result_json"])
+        # Older idempotency receipts predate these derived snapshot fields.
+        # Preserve their original payload/fingerprint while presenting the
+        # current run shape to callers.
+        if isinstance(result, dict) and "id" in result:
+            result.setdefault("sessionId", None)
+            result.setdefault("usage", None)
+        return result
 
     def _save_receipt(self, db: sqlite3.Connection, event_id: str, operation: str, payload: Any,
                       run_id: str, result: Dict[str, Any]) -> None:
@@ -332,10 +355,14 @@ class Store:
             value = {"eventId": event["event_id"], "type": event["kind"], "revision": event["revision"], "at": event["at"]}
             value.update(json.loads(event["data_json"]))
             events.append(value)
+        session_row = db.execute("SELECT session_id FROM run_sessions WHERE run_id=?", (run_id,)).fetchone()
+        usage_row = db.execute("SELECT usage_json FROM run_usage WHERE run_id=?", (run_id,)).fetchone()
         return {"id": row["id"], "title": row["title"], "goal": row["goal"],
                 "planVersion": row["plan_version"], "revision": row["revision"], "status": row["status"],
                 "roles": plan["roles"], "phases": plan["phases"], "tasks": tasks, "events": events,
-                "createdAt": row["created_at"], "updatedAt": row["updated_at"], "pauseReason": row["pause_reason"]}
+                "createdAt": row["created_at"], "updatedAt": row["updated_at"], "pauseReason": row["pause_reason"],
+                "sessionId": session_row["session_id"] if session_row is not None else None,
+                "usage": json.loads(usage_row["usage_json"]) if usage_row is not None else None}
 
     def _append_event(self, db: sqlite3.Connection, run_id: str, event_id: str, kind: str,
                       revision: int, data: Dict[str, Any]) -> None:
@@ -361,10 +388,13 @@ class Store:
         self._append_event(db, run_id, event_id, kind, revision, data)
         return self._snapshot(db, run_id)
 
-    def create(self, plan: Any, event_id: Any) -> Dict[str, Any]:
+    def create(self, plan: Any, event_id: Any, session_id: Any = None) -> Dict[str, Any]:
         normalized = validate_plan(plan)
         event_id = self._event_id(event_id)
         payload = {"plan": normalized}
+        if session_id is not None:
+            session_id = self._session_id(session_id)
+            payload["sessionId"] = session_id
         with self._connection() as db:
             self._write_start(db)
             prior = self._prior_result(db, event_id, "create", payload)
@@ -380,6 +410,8 @@ class Store:
             db.execute("INSERT INTO runs(id,title,goal,plan_json,task_state_json,plan_version,revision,status,pause_reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                        (run_id, normalized["title"], normalized["goal"], _json(normalized), _json(states), 1, 0,
                         "draft", None, now, now))
+            if session_id is not None:
+                db.execute("INSERT INTO run_sessions(run_id,session_id) VALUES(?,?)", (run_id, session_id))
             self._append_event(db, run_id, event_id, "created", 0, {"planVersion": 1})
             result = self._snapshot(db, run_id)
             self._save_receipt(db, event_id, "create", payload, run_id, result)
@@ -630,6 +662,46 @@ class Store:
             result = self._snapshot(db, run_id)
             db.commit()
             return result
+
+    def capture_usage(self, run_id: Any, collector: Any) -> Dict[str, Any]:
+        """Capture and cache a completed run's session usage summary once.
+
+        The potentially expensive collector runs after the initial read transaction
+        closes. Concurrent callers may both collect; the first saved summary wins.
+        """
+        run_id = self._run_id(run_id)
+        with self._connection() as db:
+            db.execute("BEGIN")
+            row = db.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise WorkflowError("runId does not exist")
+            if row["status"] != "completed":
+                raise WorkflowError("usage is available only for completed runs")
+            cached = db.execute("SELECT usage_json FROM run_usage WHERE run_id=?", (run_id,)).fetchone()
+            session = db.execute("SELECT session_id FROM run_sessions WHERE run_id=?", (run_id,)).fetchone()
+            session_id = session["session_id"] if session is not None else None
+            db.commit()
+            if cached is not None:
+                return self.get(run_id)
+
+        # Never hold a SQLite write transaction while reading local session logs.
+        usage = collector(session_id)
+        if not isinstance(usage, dict):
+            raise WorkflowError("usage collector must return an object")
+        usage_json = _json(usage)
+        with self._connection() as db:
+            self._write_start(db)
+            row = db.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                raise WorkflowError("runId does not exist")
+            if row["status"] != "completed":
+                raise WorkflowError("usage is available only for completed runs")
+            cached = db.execute("SELECT usage_json FROM run_usage WHERE run_id=?", (run_id,)).fetchone()
+            if cached is None:
+                db.execute("INSERT INTO run_usage(run_id,usage_json) VALUES(?,?)", (run_id, usage_json))
+            db.commit()
+        # Read back the first-wins value in case another caller saved first.
+        return self.get(run_id)
 
     def list_runs(self, limit: Any = 20) -> List[Dict[str, Any]]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:

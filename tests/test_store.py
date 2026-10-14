@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 import pathlib
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -63,6 +64,20 @@ class StoreTests(unittest.TestCase):
 
     def start_run(self, run):
         return self.store.confirm(run["id"], run["revision"], "confirm-1", "用户已确认计划")
+
+    def complete_run(self, run):
+        run = self.start_run(run)
+        role_kinds = {role["id"]: role["kind"] for role in run["roles"]}
+        for task in run["tasks"]:
+            event_base = "complete-" + task["id"]
+            fields = {"nativeId": "native-" + task["id"]} if role_kinds[task["roleId"]] == "native" else {}
+            run = self.store.task_event(run["id"], task["id"], "running", run["revision"],
+                                        event_base + "-start", **fields)
+            run = self.store.task_event(run["id"], task["id"], "submitted", run["revision"],
+                                        event_base + "-submit", summary="已完成任务")
+            run = self.store.task_event(run["id"], task["id"], "done", run["revision"],
+                                        event_base + "-done", acceptance="符合验收标准")
+        return run
 
     def test_plan_validation_rejects_invalid_references_cycles_and_empty_phases(self):
         plan = sample_plan()
@@ -289,6 +304,129 @@ class StoreTests(unittest.TestCase):
         self.assertEqual({item["id"] for item in restarted.list_runs()}, {first["id"], second["id"]})
         with self.assertRaisesRegex(WorkflowError, "does not exist"):
             restarted.get("not-a-real-run")
+
+    def test_session_id_is_validated_bound_at_creation_and_legacy_create_is_idempotent(self):
+        legacy = self.create("usage-legacy-create")
+        self.assertIsNone(legacy["sessionId"])
+        self.assertIsNone(legacy["usage"])
+        replay = self.store.create(sample_plan(), "usage-legacy-create")
+        self.assertEqual((replay["id"], replay["sessionId"], replay["usage"]),
+                         (legacy["id"], None, None))
+
+        bound = self.store.create(sample_plan(), "usage-bound-create", session_id="session.123:abc")
+        self.assertEqual(bound["sessionId"], "session.123:abc")
+        updated = self.store.update_draft(bound["id"], sample_plan() | {"title": "修改草案"},
+                                          bound["revision"], "usage-bound-update")
+        self.assertEqual(updated["sessionId"], "session.123:abc")
+        self.assertIsNone(updated["usage"])
+        with self.assertRaisesRegex(WorkflowError, "different parameters"):
+            self.store.create(sample_plan(), "usage-legacy-create", session_id="session-123")
+
+        for invalid in ("../outside", r"folder\\session", "", "x" * 129, "space id"):
+            with self.subTest(session_id=invalid):
+                with self.assertRaises(WorkflowError):
+                    self.store.create(sample_plan(), "invalid-session-" + str(len(invalid)), session_id=invalid)
+
+    def test_usage_capture_is_gated_first_wins_persisted_and_does_not_change_workflow(self):
+        run = self.complete_run(self.store.create(sample_plan(), "usage-complete-create", "session-usage"))
+        before = self.store.get(run["id"])
+        calls = []
+        summary = {"version": 1, "status": "available", "sessionId": "session-usage",
+                   "totals": {"totalTokens": 17}}
+
+        def collector(session_id):
+            calls.append(session_id)
+            return summary
+
+        captured = self.store.capture_usage(run["id"], collector)
+        self.assertEqual(calls, ["session-usage"])
+        self.assertEqual(captured["usage"], summary)
+        self.assertEqual(captured["sessionId"], "session-usage")
+        self.assertEqual((captured["revision"], captured["events"]), (before["revision"], before["events"]))
+        captured["usage"]["totals"]["totalTokens"] = -1
+
+        cached = self.store.capture_usage(run["id"], lambda _session_id: self.fail("cached usage rescanned"))
+        self.assertEqual(cached["usage"]["totals"]["totalTokens"], 17)
+        restarted = Store(self.db_path)
+        self.assertEqual(restarted.get(run["id"])["usage"]["totals"]["totalTokens"], 17)
+        self.assertEqual(restarted.get(run["id"])["revision"], before["revision"])
+
+    def test_concurrent_usage_scans_keep_first_saved_snapshot_and_legacy_collector_gets_none(self):
+        run = self.complete_run(self.store.create(sample_plan(), "usage-race-first"))
+        ready = threading.Barrier(2)
+        results = []
+        errors = []
+        calls = []
+
+        def scan(label):
+            def collector(session_id):
+                calls.append(session_id)
+                self.assertIsNone(session_id)
+                ready.wait(10)
+                return {"version": 1, "status": "unavailable", "sessionId": None,
+                        "notes": [label]}
+            try:
+                results.append(self.store.capture_usage(run["id"], collector))
+            except Exception as error:
+                errors.append(error)
+
+        workers = [threading.Thread(target=scan, args=(label,)) for label in ("first", "second")]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(10)
+        self.assertFalse(any(worker.is_alive() for worker in workers), "usage scans did not finish")
+        self.assertEqual(errors, [])
+        self.assertEqual(calls, [None, None])
+        self.assertEqual(len(results), 2)
+        saved = self.store.get(run["id"])["usage"]
+        self.assertIn(saved["notes"], (["first"], ["second"]))
+        self.assertEqual([result["usage"] for result in results], [saved, saved])
+
+    def test_usage_capture_validates_run_and_completion_before_collector_and_rechecks_before_save(self):
+        draft = self.create("usage-draft")
+        calls = []
+        collector = lambda session_id: calls.append(session_id) or {"status": "unavailable"}
+        for run_id in ("bad/path", "missing-run"):
+            with self.subTest(run_id=run_id):
+                with self.assertRaises(WorkflowError):
+                    self.store.capture_usage(run_id, collector)
+        with self.assertRaisesRegex(WorkflowError, "completed"):
+            self.store.capture_usage(draft["id"], collector)
+        self.assertEqual(calls, [])
+
+        completed = self.complete_run(self.store.create(sample_plan(), "usage-race-create"))
+
+        def change_status_while_collecting(session_id):
+            calls.append(session_id)
+            with sqlite3.connect(self.db_path) as db:
+                db.execute("UPDATE runs SET status='running' WHERE id=?", (completed["id"],))
+            return {"status": "available"}
+
+        with self.assertRaisesRegex(WorkflowError, "completed"):
+            self.store.capture_usage(completed["id"], change_status_while_collecting)
+        self.assertEqual(calls, [None])
+        with sqlite3.connect(self.db_path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM run_usage WHERE run_id=?",
+                                        (completed["id"],)).fetchone()[0], 0)
+
+    def test_old_database_without_session_usage_tables_and_receipt_fields_remains_readable(self):
+        run = self.create("old-db-create")
+        with sqlite3.connect(self.db_path) as db:
+            old_result = json.loads(db.execute("SELECT result_json FROM idempotency WHERE event_id=?",
+                                               ("old-db-create",)).fetchone()[0])
+            old_result.pop("sessionId", None)
+            old_result.pop("usage", None)
+            db.execute("UPDATE idempotency SET result_json=? WHERE event_id=?",
+                       (json.dumps(old_result), "old-db-create"))
+            db.execute("DROP TABLE run_sessions")
+            db.execute("DROP TABLE run_usage")
+
+        upgraded = Store(self.db_path)
+        self.assertEqual(upgraded.get(run["id"])["sessionId"], None)
+        self.assertIsNone(upgraded.get(run["id"])["usage"])
+        replay = upgraded.create(sample_plan(), "old-db-create")
+        self.assertEqual((replay["id"], replay["sessionId"], replay["usage"]), (run["id"], None, None))
 
     def test_get_uses_one_snapshot_when_confirmation_commits_mid_read(self):
         run = self.create("snapshot-create")

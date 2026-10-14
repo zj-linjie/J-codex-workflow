@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 BUILD = pathlib.Path(__file__).resolve().parents[1]
 MCP_DIR = BUILD / "plugin" / "mcp"
@@ -32,14 +33,20 @@ class MCPTests(unittest.TestCase):
         tools = {item["name"]: item for item in response["tools"]}
         self.assertEqual(set(tools), {
             "workflow_create", "workflow_update_draft", "workflow_confirm", "workflow_event",
-            "workflow_control", "workflow_get", "workflow_list", "workflow_board", "workflow_observed"})
+            "workflow_control", "workflow_get", "workflow_usage", "workflow_list", "workflow_board", "workflow_observed"})
         self.assertEqual(tools["workflow_create"]["inputSchema"]["required"], ["plan", "eventId"])
+        self.assertEqual(tools["workflow_create"]["inputSchema"]["properties"]["sessionId"]["maxLength"], 128)
         role_properties = tools["workflow_create"]["inputSchema"]["properties"]["plan"]["properties"]["roles"]["items"]["properties"]
         self.assertIn("agentType", role_properties)
         self.assertIn("agentType", tools["workflow_event"]["inputSchema"]["properties"])
         self.assertEqual(tools["workflow_confirm"]["_meta"]["ui"]["visibility"], ["model"])
         self.assertEqual(tools["workflow_observed"]["_meta"]["ui"]["visibility"], ["app"])
         self.assertEqual(tools["workflow_get"]["_meta"]["ui"]["visibility"], ["model", "app"])
+        self.assertEqual(tools["workflow_usage"]["inputSchema"]["required"], ["runId"])
+        self.assertEqual(set(tools["workflow_usage"]["inputSchema"]["properties"]), {"runId"})
+        self.assertEqual(tools["workflow_usage"]["_meta"]["ui"]["visibility"], ["model", "app"])
+        self.assertTrue(tools["workflow_usage"]["annotations"]["readOnlyHint"])
+        self.assertTrue(tools["workflow_usage"]["_meta"]["openai/widgetAccessible"])
         for name in ("workflow_create", "workflow_update_draft", "workflow_confirm", "workflow_event",
                      "workflow_control", "workflow_list"):
             self.assertFalse(tools[name]["_meta"]["openai/widgetAccessible"], name)
@@ -74,6 +81,57 @@ class MCPTests(unittest.TestCase):
         self.assertTrue(unknown["isError"])
         listed = self.tool_call("workflow_list", {})["structuredContent"]["runs"]
         self.assertEqual({item["id"] for item in listed}, {run["id"], other["id"]})
+
+    def test_mcp_session_usage_capture_is_app_visible_gated_cached_and_does_not_rescan_reads(self):
+        created = self.tool_call("workflow_create", {"plan": sample_plan(), "eventId": "usage-mcp-create",
+                                                      "sessionId": "session-mcp"})
+        run = created["structuredContent"]["run"]
+        self.assertEqual(run["sessionId"], "session-mcp")
+        with mock.patch.object(server, "collect_usage", side_effect=AssertionError("draft usage scanned")) as scan:
+            before = self.tool_call("workflow_usage", {"runId": run["id"]})
+            self.assertTrue(before["isError"])
+            self.assertEqual(scan.call_count, 0)
+            # Read and board calls must never trigger the local usage collector.
+            self.tool_call("workflow_get", {"runId": run["id"]})
+            self.tool_call("workflow_board", {"runId": run["id"]})
+            self.assertEqual(scan.call_count, 0)
+
+        run = self.store.confirm(run["id"], run["revision"], "usage-mcp-confirm", "确认")
+        role_kinds = {role["id"]: role["kind"] for role in run["roles"]}
+        for task in run["tasks"]:
+            prefix = "usage-mcp-" + task["id"]
+            start_args = {"nativeId": "native-" + task["id"]} if role_kinds[task["roleId"]] == "native" else {}
+            run = self.store.task_event(run["id"], task["id"], "running", run["revision"], prefix + "-start", **start_args)
+            run = self.store.task_event(run["id"], task["id"], "submitted", run["revision"], prefix + "-submit",
+                                        summary="已完成")
+            run = self.store.task_event(run["id"], task["id"], "done", run["revision"], prefix + "-done",
+                                        acceptance="通过")
+        revision, events = run["revision"], run["events"]
+        summary = {"version": 1, "status": "available", "sessionId": "session-mcp",
+                   "totals": {"totalTokens": 23}}
+        with mock.patch.object(server, "collect_usage", return_value=summary) as scan:
+            captured = self.tool_call("workflow_usage", {"runId": run["id"]})
+            self.assertNotIn("isError", captured)
+            self.assertEqual(scan.call_args.args, ("session-mcp",))
+            captured_run = captured["structuredContent"]["run"]
+            self.assertEqual(captured_run["usage"], summary)
+            self.assertEqual((captured_run["revision"], captured_run["events"]), (revision, events))
+
+        with mock.patch.object(server, "collect_usage", side_effect=AssertionError("cached usage rescanned")) as scan:
+            cached = self.tool_call("workflow_usage", {"runId": run["id"]})
+            self.assertEqual(cached["structuredContent"]["run"]["usage"], summary)
+            self.assertEqual(scan.call_count, 0)
+
+    def test_mcp_create_rejects_invalid_session_ids_and_usage_errors_do_not_scan(self):
+        invalid = self.tool_call("workflow_create", {"plan": sample_plan(), "eventId": "bad-session",
+                                                     "sessionId": "../outside"})
+        self.assertTrue(invalid["isError"])
+        with mock.patch.object(server, "collect_usage", side_effect=AssertionError("invalid run scanned")) as scan:
+            missing = self.tool_call("workflow_usage", {"runId": "missing-run"})
+            self.assertTrue(missing["isError"])
+            invalid_run_id = self.tool_call("workflow_usage", {"runId": "bad/path"})
+            self.assertTrue(invalid_run_id["isError"])
+            self.assertEqual(scan.call_count, 0)
 
     def test_mcp_create_update_and_running_event_carry_agent_type_binding(self):
         plan = sample_plan()
@@ -133,7 +191,7 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(replies[-1]["error"]["code"], -32601)
         self.assertEqual({item["name"] for item in replies[1]["result"]["tools"]},
                          {"workflow_create", "workflow_update_draft", "workflow_confirm", "workflow_event",
-                          "workflow_control", "workflow_get", "workflow_list", "workflow_board", "workflow_observed"})
+                          "workflow_control", "workflow_get", "workflow_usage", "workflow_list", "workflow_board", "workflow_observed"})
 
 
 if __name__ == "__main__":

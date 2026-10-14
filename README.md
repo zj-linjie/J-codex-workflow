@@ -4,7 +4,7 @@
 
 Define roles and phases in a Codex conversation, approve the plan, and follow native subagents on a live inline workflow board.
 
-**Early preview · v0.2.0.** All 27 local tests pass. Full workflow validation of the packaged plugin inside the Codex desktop host is still pending. An earlier native MCP probe confirmed that an inline component can update during a real subagent task.
+**Early preview · v0.3.0.** All 47 local tests pass. Full workflow validation of the packaged plugin inside the Codex desktop host is still pending. An earlier native MCP probe confirmed that an inline component can update during a real subagent task.
 
 ## How it works
 
@@ -47,6 +47,12 @@ A native role's `agentType` is passed to `spawn_agent` and reported with its run
 
 The separate [orchestrator setting](plugin/settings/orchestrator.json) lets the main agent consider one Astra consultation after two setbacks on the same problem. It is enabled by default; set `enabled` to false to disable. This does not switch the parent model or automatically retry a paused task. The [policy reference](plugin/skills/codex-workflow/references/escalation.md) explains counters, quotas, and overrides. Role and consultation execution in this version remain unverified in the live host.
 
+## Completion session statistics
+
+After a workflow completes, the board collects one local snapshot of the **current main session and its subagents**, including earlier activity in the same chat. It shows input/cache/output/reasoning tokens, model and session breakdowns, and response-average output speed with sample counts and percentiles. Cached input and reasoning output are already included in their parent totals.
+
+The orchestrator binds the actual current `CODEX_THREAD_ID` as `sessionId` when creating a run. The board calls `workflow_usage` directly over MCP, then reuses the stored snapshot; it does not ask the model to poll for statistics. Missing logs or an unbound legacy run show partial/unavailable coverage. Speed is not a streaming rate, and the current response may not yet be flushed to disk. Reports from runs in the same chat overlap. No billing estimates or raw conversation content are stored. See [statistics scope and algorithm](plugin/skills/codex-workflow/references/session-usage.md).
+
 ## Use
 
 In a conversation with the plugin loaded:
@@ -60,7 +66,7 @@ Use `workflow_list` to find a previous run and `workflow_board` with its run ID 
 ## Data and boundaries
 
 - Each board binds to an explicit run ID. Writes use revisions and idempotency keys.
-- SQLite persists plans, summaries, artifact references, and events. It does not read conversation databases or artifact contents.
+- SQLite persists plans, summaries, artifact references, events, and numeric usage snapshots. Completion statistics read local session logs, without reading conversation databases or artifact contents.
 - Data defaults to `~/.local/share/codex-workflow/`; override it with `CODEX_WORKFLOW_DATA_DIR`.
 - The main agent explicitly reports status. There is no independent subscription to all native agent lifecycle events or authentication of recorded agent IDs.
 - Restarting the service restores saved records. The main agent reconciles native agent state before resuming.
