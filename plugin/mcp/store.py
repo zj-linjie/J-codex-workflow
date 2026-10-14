@@ -89,7 +89,7 @@ def validate_plan(plan: Any) -> Dict[str, Any]:
     role_ids = set()
     for index, role in enumerate(roles):
         label = "roles[%d]" % index
-        _plain_object(role, label, ("id", "name", "kind", "instructions"))
+        _plain_object(role, label, ("id", "name", "kind", "instructions"), ("agentType",))
         role_id = _identifier(role["id"], label + ".id")
         if role_id in role_ids:
             raise WorkflowError("role ids must be unique")
@@ -99,7 +99,12 @@ def validate_plan(plan: Any) -> Dict[str, Any]:
         if kind not in ("native", "primary"):
             raise WorkflowError(label + ".kind must be native or primary")
         instructions = _string(role["instructions"], label + ".instructions", 8000)
-        normalized_roles.append({"id": role_id, "name": name, "kind": kind, "instructions": instructions})
+        normalized_role = {"id": role_id, "name": name, "kind": kind, "instructions": instructions}
+        if "agentType" in role:
+            if kind != "native":
+                raise WorkflowError(label + ".agentType is only valid for native roles")
+            normalized_role["agentType"] = _identifier(role["agentType"], label + ".agentType")
+        normalized_roles.append(normalized_role)
 
     normalized_phases: List[Dict[str, str]] = []
     phase_ids = set()
@@ -315,10 +320,11 @@ class Store:
         tasks = []
         for task in plan["tasks"]:
             state = states[task["id"]]
-            tasks.append(dict(task, status=state["status"], nativeId=state["nativeId"],
+            tasks.append(dict(task, status=state["status"], nativeId=state.get("nativeId"),
+                              agentType=state.get("agentType"),
                               message=state["message"], summary=state["summary"],
                               artifacts=state["artifacts"], acceptance=state["acceptance"],
-                              attempt=state["attempt"]))
+                              attempt=state.get("attempt", 1)))
         event_rows = db.execute("SELECT event_id,kind,revision,at,data_json FROM events WHERE run_id=? ORDER BY seq DESC LIMIT ?",
                                 (run_id, _MAX_RECENT_EVENTS)).fetchall()
         events = []
@@ -367,7 +373,8 @@ class Store:
                 return prior
             run_id = str(uuid.uuid4())
             now = _now()
-            states = {task["id"]: {"status": "pending", "nativeId": None, "message": "", "summary": "",
+            states = {task["id"]: {"status": "pending", "nativeId": None, "agentType": None,
+                                  "message": "", "summary": "",
                                   "artifacts": [], "acceptance": "", "attempt": 1}
                       for task in normalized["tasks"]}
             db.execute("INSERT INTO runs(id,title,goal,plan_json,task_state_json,plan_version,revision,status,pause_reason,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -393,8 +400,9 @@ class Store:
             self._check_revision(row, expected_revision)
             if row["status"] != "draft":
                 raise WorkflowError("only a draft run can be edited")
-            states = {task["id"]: old_states.get(task["id"], {"status": "pending", "nativeId": None, "message": "",
-                      "summary": "", "artifacts": [], "acceptance": "", "attempt": 1}) for task in normalized["tasks"]}
+            states = {task["id"]: old_states.get(task["id"], {"status": "pending", "nativeId": None,
+                      "agentType": None, "message": "", "summary": "", "artifacts": [], "acceptance": "",
+                      "attempt": 1}) for task in normalized["tasks"]}
             result = self._commit_run(db, run_id, plan=normalized, states=states, plan_version=row["plan_version"] + 1,
                                       revision=row["revision"] + 1, status="draft", pause_reason=None,
                                       event_id=event_id, kind="draft_updated", data={"planVersion": row["plan_version"] + 1})
@@ -430,12 +438,12 @@ class Store:
         if status not in ("running", "submitted", "done", "failed"):
             raise WorkflowError("status must be running, submitted, done, or failed")
         expected_revision, event_id = self._revision(expected_revision), self._event_id(event_id)
-        allowed = {"nativeId", "message", "summary", "artifacts", "acceptance"}
+        allowed = {"nativeId", "agentType", "message", "summary", "artifacts", "acceptance"}
         extra = set(fields) - allowed
         if extra:
             raise WorkflowError("unsupported task event fields: %s" % ", ".join(sorted(extra)))
         allowed_by_status = {
-            "running": {"nativeId", "message"},
+            "running": {"nativeId", "agentType", "message"},
             "submitted": {"message", "summary", "artifacts"},
             "done": {"message", "artifacts", "acceptance"},
             "failed": {"message", "artifacts"},
@@ -446,6 +454,8 @@ class Store:
         cleaned: Dict[str, Any] = {}
         if "nativeId" in fields:
             cleaned["nativeId"] = _string(fields["nativeId"], "nativeId", 256)
+        if "agentType" in fields:
+            cleaned["agentType"] = _identifier(fields["agentType"], "agentType")
         for key, maximum in (("message", 4000), ("summary", 4000), ("acceptance", 4000)):
             if key in fields:
                 cleaned[key] = _string(fields[key], key, maximum, required=(key in ("summary", "acceptance")))
@@ -493,12 +503,18 @@ class Store:
                     raise WorkflowError("all earlier phase tasks must be accepted first")
                 role = next(item for item in plan["roles"] if item["id"] == task["roleId"])
                 native_id = cleaned.get("nativeId")
+                agent_type = cleaned.get("agentType")
                 if role["kind"] == "native" and not native_id:
                     raise WorkflowError("native tasks require a nativeId before starting")
                 if role["kind"] == "primary" and native_id is not None:
                     raise WorkflowError("primary tasks must not claim a nativeId")
+                if role["kind"] == "primary" and agent_type is not None:
+                    raise WorkflowError("primary tasks must not claim an agentType")
+                if role.get("agentType") is not None and agent_type != role["agentType"]:
+                    raise WorkflowError("running agentType must match the role binding")
                 state["status"] = "running"
                 state["nativeId"] = native_id
+                state["agentType"] = agent_type
                 state["message"] = cleaned.get("message", "")
             elif status == "submitted":
                 if old_status != "running":
@@ -583,7 +599,7 @@ class Store:
                 state = states.get(task_id)
                 if state is None or state["status"] != "failed":
                     raise WorkflowError("retry requires a failed task in this run")
-                state.update({"status": "pending", "nativeId": None, "message": reason,
+                state.update({"status": "pending", "nativeId": None, "agentType": None, "message": reason,
                               "summary": "", "artifacts": [], "acceptance": "", "attempt": state["attempt"] + 1})
                 if any(value["status"] == "failed" for value in states.values()):
                     run_status = "paused"

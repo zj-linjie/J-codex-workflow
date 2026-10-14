@@ -26,6 +26,13 @@ class PackageTests(unittest.TestCase):
             self.assertIn('MIT License', (plugin / 'LICENSE').read_text())
             self.assertTrue((plugin / 'skills/codex-workflow/references/plan-schema.md').is_file())
             self.assertTrue((plugin / 'examples/research-review.json').is_file())
+            self.assertTrue((plugin / 'settings/orchestrator.json').is_file())
+            self.assertTrue((plugin / 'scripts/escalation_policy.py').is_file())
+            self.assertTrue((plugin / 'agent-profiles/WorkflowExpertAdvisor.toml').is_file())
+            agent_destination = Path(directory) / 'installed-agents'
+            subprocess.run([sys.executable, str(plugin / 'scripts/install_agents.py'),
+                            '--destination', str(agent_destination)], check=True, capture_output=True)
+            self.assertEqual(len(list(agent_destination.glob('*.toml'))), 4)
             config = json.loads((plugin / '.mcp.json').read_text())['mcpServers']['codex-workflow']
             env = os.environ.copy()
             env['CODEX_WORKFLOW_DATA_DIR'] = str(Path(directory) / 'data')

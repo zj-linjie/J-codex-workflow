@@ -6,13 +6,15 @@
       "id": "implementer",
       "name": "实现代理",
       "kind": "native",
-      "instructions": "先检查仓库约定与现有实现，再完成分配的代码变更。提交修改文件清单、关键实现说明、运行过的验证命令及其真实结果；不要声称未运行的检查通过。"
+      "instructions": "先检查仓库约定与现有实现，再完成分配的代码变更。提交修改文件清单、关键实现说明、运行过的验证命令及其真实结果；不要声称未运行的检查通过。",
+      "agentType": "WorkflowExecutor"
     },
     {
       "id": "reviewer",
       "name": "独立复核代理",
       "kind": "native",
-      "instructions": "读取实际工作区差异并对照用户目标复核正确性、边界情况和回归风险。按严重度列出具体问题及文件位置；若没有发现问题，说明检查范围和未验证事项。不要修改代码。"
+      "instructions": "读取实际工作区差异并对照用户目标复核正确性、边界情况和回归风险。按严重度列出具体问题及文件位置；若没有发现问题，说明检查范围和未验证事项。不要修改代码。",
+      "agentType": "WorkflowReviewer"
     },
     {
       "id": "lead",
@@ -22,9 +24,18 @@
     }
   ],
   "phases": [
-    {"id": "implementation", "name": "实现变更"},
-    {"id": "review", "name": "独立复核"},
-    {"id": "acceptance", "name": "主代理验收"}
+    {
+      "id": "implementation",
+      "name": "实现变更"
+    },
+    {
+      "id": "review",
+      "name": "独立复核"
+    },
+    {
+      "id": "acceptance",
+      "name": "主代理验收"
+    }
   ],
   "tasks": [
     {
@@ -40,7 +51,9 @@
       "name": "检查实现差异",
       "roleId": "reviewer",
       "phaseId": "review",
-      "dependsOn": ["implement_change"],
+      "dependsOn": [
+        "implement_change"
+      ],
       "acceptanceCriteria": "检查实际差异并给出可定位的问题或明确的无发现结论；严重阻塞项及未验证风险清楚列出。"
     },
     {
@@ -48,7 +61,9 @@
       "name": "主代理核对并交付",
       "roleId": "lead",
       "phaseId": "acceptance",
-      "dependsOn": ["review_change"],
+      "dependsOn": [
+        "review_change"
+      ],
       "acceptanceCriteria": "主代理已读取实现产物并逐条处理复核结果；最终说明变更、实际验证、未解决事项，且不把子代理返回当作验收通过。"
     }
   ]

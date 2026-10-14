@@ -44,7 +44,8 @@ PLAN = {
         "title": STRING, "goal": STRING,
         "roles": {"type": "array", "items": {"type": "object", "properties": {
             "id": STRING, "name": STRING, "kind": {"type": "string", "enum": ["native", "primary"]},
-            "instructions": STRING}, "required": ["id", "name", "kind", "instructions"], "additionalProperties": False}},
+            "instructions": STRING, "agentType": STRING},
+            "required": ["id", "name", "kind", "instructions"], "additionalProperties": False}},
         "phases": {"type": "array", "items": {"type": "object", "properties": {
             "id": STRING, "name": STRING}, "required": ["id", "name"], "additionalProperties": False}},
         "tasks": {"type": "array", "items": {"type": "object", "properties": {
@@ -105,6 +106,7 @@ def tools_list() -> Dict[str, Any]:
         _tool("workflow_event", "上报工作流任务状态", "记录原生任务进展、结果或主代理验收；执行必须满足阶段与依赖门禁。",
               {"runId": STRING, "taskId": STRING, "status": {"type": "string", "enum": ["running", "submitted", "done", "failed"]},
                "nativeId": STRING, "message": STRING, "summary": STRING,
+               "agentType": STRING,
                "artifacts": {"type": "array", "items": STRING}, "acceptance": STRING,
                "expectedRevision": INTEGER, "eventId": STRING},
               ["runId", "taskId", "status", "expectedRevision", "eventId"], model),
@@ -199,7 +201,7 @@ def _call_tool(params: Any) -> Dict[str, Any]:
                                 arguments.get("eventId"), arguments.get("confirmation"))
             return _content_result({"run": run}, "工作流已确认并进入执行状态。")
         if name == "workflow_event":
-            fields = {key: arguments[key] for key in ("nativeId", "message", "summary", "artifacts", "acceptance") if key in arguments}
+            fields = {key: arguments[key] for key in ("nativeId", "agentType", "message", "summary", "artifacts", "acceptance") if key in arguments}
             run = store.task_event(arguments.get("runId"), arguments.get("taskId"), arguments.get("status"),
                                    arguments.get("expectedRevision"), arguments.get("eventId"), **fields)
             return _content_result({"run": run}, "工作流任务状态已记录。")
@@ -234,7 +236,7 @@ def respond(method: str, params: Any = None) -> Dict[str, Any]:
         return {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}, "resources": {},
                                  "extensions": {"io.modelcontextprotocol/ui": {}}},
-                "serverInfo": {"name": "codex-workflow", "version": "0.1.1"}}
+                "serverInfo": {"name": "codex-workflow", "version": "0.2.0"}}
     if method == "ping":
         return {}
     if method == "tools/list":

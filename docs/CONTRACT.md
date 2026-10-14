@@ -1,24 +1,26 @@
-# 0.1 接口契约
+# 0.2 接口契约
 
 Python 3.9+ 标准库。SQLite 数据默认在 `~/.local/share/codex-workflow/workflows.sqlite3`，环境变量 `CODEX_WORKFLOW_DATA_DIR` 可覆盖；测试必须临时目录。工程 staging 不作为运行数据。
 
 计划 plan:
 ```json
-{"title":"调研并评审","goal":"输出可验证建议","roles":[{"id":"analyst","name":"调研员","kind":"native","instructions":"核查依据"},{"id":"owner","name":"主代理","kind":"primary","instructions":"验收"}],"phases":[{"id":"research","name":"并行调研"},{"id":"review","name":"验收交付"}],"tasks":[{"id":"t1","name":"核对能力","roleId":"analyst","phaseId":"research","dependsOn":[],"acceptanceCriteria":"可追溯依据"},{"id":"t2","name":"汇总结论","roleId":"owner","phaseId":"review","dependsOn":["t1"],"acceptanceCriteria":"结论覆盖目标"}]}
+{"title":"调研并评审","goal":"输出可验证建议","roles":[{"id":"analyst","name":"调研员","kind":"native","agentType":"WorkflowExpertAdvisor","instructions":"核查依据"},{"id":"owner","name":"主代理","kind":"primary","instructions":"验收"}],"phases":[{"id":"research","name":"并行调研"},{"id":"review","name":"验收交付"}],"tasks":[{"id":"t1","name":"核对能力","roleId":"analyst","phaseId":"research","dependsOn":[],"acceptanceCriteria":"可追溯依据"},{"id":"t2","name":"汇总结论","roleId":"owner","phaseId":"review","dependsOn":["t1"],"acceptanceCriteria":"结论覆盖目标"}]}
 ```
 
 严格验证字符串长度、非空、唯一 ID、有效引用、DAG、依赖不能指向后续阶段、每阶段有任务。max roles=32, phases=12, tasks=64。角色 kind native/primary。
 
+0.2新增：native角色可带`agentType`（标识符，最多64字符），primary禁止该字段。新技能生成的native角色必须明确绑定；旧计划可省略以兼容读取。绑定类型是角色定义，任务中的agentType是启动事件上报的执行类型，均不作为宿主身份认证。Astra咨询策略位于独立`settings/orchestrator.json`，不属于角色表。
+
 字段上限（字符数）：title 120、goal 4000、role.name 80、role.instructions 8000、phase.name 100、task.name 160、acceptanceCriteria 2000、nativeId 256、message/summary/acceptance 4000、confirmation/reason 2000、eventId/clientId 128。计划 ID 最长64，使用字母数字开头及字母数字点下划线连字符；runId 最长128，另允许冒号。artifacts 最多32项，每项2048；list limit 1–100。
 
-状态统一返回 `{run: {...}}`。run 包含 `id,title,goal,planVersion,revision,status,roles,phases,tasks,events,createdAt,updatedAt,pauseReason`。时间 ISO UTC 字符串。roles/phases 保留计划字段；tasks 计划字段加 `status,nativeId,message,summary,artifacts,acceptance,attempt`。events 最近 100 条。phase 进度由 UI 从 task 计算。
+状态统一返回 `{run: {...}}`。run 包含 `id,title,goal,planVersion,revision,status,roles,phases,tasks,events,createdAt,updatedAt,pauseReason`。时间 ISO UTC 字符串。roles/phases 保留计划字段；tasks 计划字段加 `status,nativeId,agentType,message,summary,artifacts,acceptance,attempt`。events 最近 100 条。phase 进度由 UI 从 task 计算。
 
 MCP 工具/本地 Python Store 对应（所有写入需 eventId 唯一字符串；create 外需 expectedRevision 非负整数）：
 
 - `workflow_create({plan,eventId})` / `Store.create(plan,event_id)` → run，草案。
 - `workflow_update_draft({runId,plan,expectedRevision,eventId})` / `Store.update_draft(...)`。
 - `workflow_confirm({runId,expectedRevision,eventId,confirmation})` / `Store.confirm(...)`，confirmation 为真实用户确认内容摘要，不能空。
-- `workflow_event({runId,taskId,status,nativeId?,message?,summary?,artifacts?,acceptance?,expectedRevision,eventId})` / `Store.task_event(run_id,task_id,status,expected_revision,event_id,**fields)`。
+- `workflow_event({runId,taskId,status,nativeId?,agentType?,message?,summary?,artifacts?,acceptance?,expectedRevision,eventId})` / `Store.task_event(run_id,task_id,status,expected_revision,event_id,**fields)`。
 - `workflow_control({runId,action,reason,taskId?,expectedRevision,eventId})` / `Store.control(...)`，action pause/resume/retry/cancel。reason 为用户决定/暂停原因；retry 需 taskId=failed 任务。
 - `workflow_get({runId})` / `Store.get(run_id)`，UI 和 model 可见，只读。
 - `workflow_list({limit?})` / `Store.list_runs(limit=20)` → `{runs:[{id,title,status,updatedAt,...}]}`，仅 model。
@@ -29,6 +31,8 @@ MCP 工具/本地 Python Store 对应（所有写入需 eventId 唯一字符串�
 
 MCP UI 沿用已实测 JSON-RPC postMessage 握手：ui/initialize、ui/notifications/initialized、ui/notifications/tool-result；get 输入 runId 必填，错误不切换其他运行。页面只读工具只有 get、observed。model 写入工具 ui.visibility=[model]；board 入口采用已实测 metadata。零外链脚本、零 localhost iframe、严格 CSP、文本安全呈现。
 
-事件字段按状态限制：running 只接受 nativeId/message；submitted 接受 message/summary/artifacts，summary必填；done 接受 message/artifacts/acceptance，acceptance必填；failed 接受 message/artifacts，message必填。无关字段拒绝。普通暂停保留在途任务；paused允许其提交/失败收尾，但不能开始或完成验收。resume不能绕过failed，需用户明确retry；retry重置指定失败任务并增加attempt，还有其他failed时保持paused。
+事件字段按状态限制：running 只接受 nativeId/agentType/message；绑定角色必须上报匹配agentType，primary禁止原生身份字段；submitted 接受 message/summary/artifacts，summary必填；done 接受 message/artifacts/acceptance，acceptance必填；failed 接受 message/artifacts，message必填。无关字段拒绝。普通暂停保留在途任务；paused允许其提交/失败收尾，但不能开始或完成验收。resume不能绕过failed，需用户明确retry；retry重置指定失败任务并增加attempt，还有其他failed时保持paused。
 
 代码位置：`plugin/mcp/store.py` 与 `server.py`；看板 `plugin/ui/board.html`；技能 `plugin/skills/codex-workflow/`。可选 CLI 由主代理补齐。所有模块不依赖绝对 authoring 路径。
+
+retry同时清空任务nativeId和执行agentType，保留角色agentType绑定；旧JSON缺少agentType时快照返回null。

@@ -4,7 +4,7 @@
 
 在 Codex 会话中定义角色与阶段，确认方案后调度原生子代理，通过动态内联看板查看执行进度。
 
-**早期预览版 · v0.1.1。** 本地 17 项测试全部通过；正式安装包在 Codex 桌面宿主中的完整工作流验收仍待完成。此前的原生 MCP 探针已验证：真实子代理执行期间，会话内联组件可以自动更新。
+**早期预览版 · v0.2.0。** 本地 27 项测试全部通过；正式安装包在 Codex 桌面宿主中的完整工作流验收仍待完成。此前的原生 MCP 探针已验证：真实子代理执行期间，会话内联组件可以自动更新。
 
 ## 工作方式
 
@@ -31,6 +31,21 @@ codex plugin add codex-workflow@codex-workflow-local
 安装后重启 Codex，或使用已加载新工具的会话。显示名称为 **J-codex-workflow**，兼容插件 ID 仍为 `codex-workflow`。
 
 生成的安装包包含本机启动路径，请在使用的机器上构建；移动项目后重新构建。生成包、本地数据库和凭据均不提交到 Git。
+
+## 原生工作流角色
+
+使用绑定角色前，明确执行安装助手：
+
+```bash
+python3 plugin/scripts/install_agents.py --dry-run
+python3 plugin/scripts/install_agents.py
+```
+
+助手新增WorkflowExplorer、WorkflowExecutor、WorkflowReviewer、WorkflowExpertAdvisor，保留原配置，不覆盖原来的四个角色；相同文件不重复写入，冲突文件拒绝覆盖。可用`--destination /path/to/project/.codex/agents`限定项目。重启或重新加载Codex后核对角色可用性。本PR没有安装到本机，也没有运行真实宿主验收。
+
+native角色通过`agentType`绑定原生类型，派发与running事件使用相同值；旧的无绑定计划仍可读取。详见[角色说明](plugin/skills/codex-workflow/references/agent-profiles.md)。
+
+独立的[主代理设置](plugin/settings/orchestrator.json)默认允许主代理在同一问题受挫两次后考虑一次Astra咨询；设`enabled=false`即可关闭。它不改变父模型，不自动重试暂停任务，也不在角色表添加Astra。计数、限额和覆盖方式见[策略说明](plugin/skills/codex-workflow/references/escalation.md)。本版本的新角色与咨询执行尚未做真实宿主验证。
 
 ## 使用
 

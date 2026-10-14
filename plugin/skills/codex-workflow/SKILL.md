@@ -5,11 +5,13 @@ description: Use when the user explicitly asks to run or manage a J-codex-workfl
 
 # J-codex-workflow
 
-Use this skill when the user names J-codex-workflow or explicitly asks to use a workflow. Read [plan-schema.md](references/plan-schema.md) when creating or changing a plan. The MCP tool names and argument contract are defined in the plugin's `docs/CONTRACT.md`.
+Use this skill when the user names J-codex-workflow or explicitly asks to use a workflow. Read [plan-schema.md](references/plan-schema.md) when creating or changing a plan, and [agent-profiles.md](references/agent-profiles.md) when selecting or installing native roles. The MCP tool names and argument contract are defined in the plugin's `docs/CONTRACT.md`.
 
 ## Draft and confirm
 
 Translate the user's goal into roles, ordered phases, tasks, dependencies, expected artifacts, and checkable acceptance criteria. Assign `kind: "native"` to delegated roles and `kind: "primary"` to work the current main agent will do, including synthesis and final acceptance. Keep the plan as small as the request allows while covering its real dependencies.
+
+Bind every newly drafted native role to an explicit `agentType` available in the current spawn interface. Normally use WorkflowExplorer, WorkflowExecutor, WorkflowReviewer, or WorkflowExpertAdvisor. Keep the business-facing name task-specific. Primary roles have no agentType. A TOML file alone does not prove its role is loaded; resolve missing roles before confirmation, without silently falling back to default.
 
 Create a draft with `workflow_create`, then show it with `workflow_board`. Explain the phases, role responsibilities, task order, and acceptance criteria in ordinary language. The run must remain `draft`; do not spawn any workflow subagent before the user confirms that exact plan version. If the user changes the draft, persist it with `workflow_update_draft`, show the new version, and request confirmation again. A prior confirmation never carries over to an edited plan.
 
@@ -19,7 +21,9 @@ On explicit confirmation, call `workflow_confirm` for the current `revision`, wi
 
 Use the explicit `runId` on every operation. Read `workflow_get` after state changes and schedule only tasks whose dependencies are accepted and whose earlier phases are complete. Respect the native collaboration slots available in the current host.
 
-The current top-level main agent is the only dispatcher: use its native Codex collaboration subagent tool for each `native` task. Do not create another chat or task, invoke an appserver, or call an external agent API. A child does not spawn children. Record `running` with the real `nativeId` only after the native spawn call succeeds. If spawn does not return a real identity, leave the task undispatched and report the tool failure.
+The current top-level main agent is the only dispatcher: use its native Codex collaboration subagent tool for each `native` task, passing the role's `agentType` as `agent_type`. Start with `fork_turns="none"` and a bounded brief. Do not create another chat or task, invoke an appserver, or call an external agent API. A child does not spawn children. Record `running` with the real `nativeId` and actual requested `agentType` only after the native spawn call succeeds. If spawn does not return a real identity, leave the task undispatched and report the tool failure.
+
+For a confirmed legacy plan whose native role has no agentType, select an explicit available profile for an undispatched or user-authorized retry task according to its already approved responsibility. Record that selection in run notes and report the actual type in the running event without editing the confirmed role. If no profile fits the approved scope, pause and ask the user to revise the plan. For old running records without agentType, retain and reconcile their native identities; do not relabel active children.
 
 Run `primary` tasks in the main agent and identify them as primary work; never invent a native ID for them. A status write only records workflow state. It does not spawn, stop, or resume an agent.
 
@@ -36,6 +40,10 @@ Before any resume, read the same `runId` and reconcile every stored `nativeId` a
 Treat each write as a compare-and-swap: pass the latest `expectedRevision` and a fresh unique `eventId` to every write other than create. Reuse an event ID only to replay the identical operation. If a write conflicts or its result is uncertain, read the same run and reconcile before taking another action; never blindly repeat a spawn or overwrite newer state. Do not write progress as though it were a control action.
 
 A request to resume or retry authorizes only the requested workflow work. It does not authorize publishing, deployment, external messages, or other outward actions that the user did not request.
+
+## Repeated setbacks
+
+When the same unresolved problem reaches the configured failure threshold, read [escalation.md](references/escalation.md) for the main agent's optional per-consultation Astra policy. This does not change workflow roles, authorize automatic retries, or switch the parent model.
 
 ## Tool availability
 

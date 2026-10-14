@@ -4,7 +4,7 @@
 
 Define roles and phases in a Codex conversation, approve the plan, and follow native subagents on a live inline workflow board.
 
-**Early preview · v0.1.1.** All 17 local tests pass. Full workflow validation of the packaged plugin inside the Codex desktop host is still pending. An earlier native MCP probe confirmed that an inline component can update during a real subagent task.
+**Early preview · v0.2.0.** All 27 local tests pass. Full workflow validation of the packaged plugin inside the Codex desktop host is still pending. An earlier native MCP probe confirmed that an inline component can update during a real subagent task.
 
 ## How it works
 
@@ -31,6 +31,21 @@ codex plugin add codex-workflow@codex-workflow-local
 Restart Codex, or use a conversation that has loaded the new tools. The display name is **J-codex-workflow**; the compatibility plugin ID remains `codex-workflow`.
 
 Generated packages contain local launch paths. Build on the machine where you will use the plugin, and rebuild after moving the project. Generated packages, databases, and credentials are excluded from Git.
+
+## Native workflow profiles
+
+Install the four bundled definitions explicitly before using bound roles:
+
+```bash
+python3 plugin/scripts/install_agents.py --dry-run
+python3 plugin/scripts/install_agents.py
+```
+
+The installer adds WorkflowExplorer, WorkflowExecutor, WorkflowReviewer, and WorkflowExpertAdvisor alongside the original profiles. It preserves their configuration, refuses conflicting files, and leaves identical files unchanged. Use `--destination /path/to/project/.codex/agents` for project scope. Restart/reload Codex and verify the intended types are loaded. This PR has not installed them or run native-host acceptance.
+
+A native role's `agentType` is passed to `spawn_agent` and reported with its running event. Old unbound plans remain readable. See [profile setup](plugin/skills/codex-workflow/references/agent-profiles.md).
+
+The separate [orchestrator setting](plugin/settings/orchestrator.json) lets the main agent consider one Astra consultation after two setbacks on the same problem. It is enabled by default; set `enabled` to false to disable. This does not switch the parent model or automatically retry a paused task. The [policy reference](plugin/skills/codex-workflow/references/escalation.md) explains counters, quotas, and overrides. Role and consultation execution in this version remain unverified in the live host.
 
 ## Use
 

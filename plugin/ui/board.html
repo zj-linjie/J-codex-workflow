@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-2BLCp1sFqaxRe4SDfOjeX6KCMmB5ZCH1I/HtTr5Ud0s='; style-src 'sha256-v7uWrouDT+zIwR0WP/HsnroWWlPZUyr3RVEoi9ZjBxk='; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vloHtgDRMn3xPDfHfdCy5Emd3Yw8eWRqnq3+zHkel7E='; style-src 'sha256-v7uWrouDT+zIwR0WP/HsnroWWlPZUyr3RVEoi9ZjBxk='; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>J-codex-workflow</title>
   <style>
     :root {
@@ -288,7 +288,7 @@
       function roleName(task, roles) {
         const role = roles.get(task.roleId);
         if (!role) return { name: "未指定角色", type: "" };
-        return { name: role.name || role.id || "未命名角色", type: role.kind === "primary" ? "主代理" : "原生子代理" };
+        return { name: role.name || role.id || "未命名角色", type: role.kind === "primary" ? "主代理" : "原生子代理" + (role.agentType ? " · " + role.agentType : "") };
       }
       function artifactText(item) {
         if (typeof item === "string") return item;
@@ -360,6 +360,10 @@
         addField(detail, "角色职责", roleRecord?.instructions || "未提供");
         addField(detail, "验收标准", task.acceptanceCriteria || "未提供");
         addField(detail, "原生代理 ID", task.nativeId || (roleRecord?.kind === "primary" ? "主代理任务" : "尚未创建"));
+        if (roleRecord?.kind === "native") {
+          addField(detail, "绑定类型", roleRecord.agentType || "未绑定（历史计划）");
+          addField(detail, "上报执行类型", task.agentType || (task.nativeId ? "历史记录未上报" : "尚未派发"));
+        }
         addField(detail, "当前进展", task.message || "未提供");
         addField(detail, "提交摘要", task.summary || "未提交");
         addField(detail, "验收说明", task.acceptance || "尚未验收");
@@ -544,7 +548,7 @@
         }
         try {
           const host = await rpc("ui/initialize", {
-            appInfo: { name: "codex-workflow-board", version: "0.1.1" },
+            appInfo: { name: "codex-workflow-board", version: "0.2.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26"
           });
