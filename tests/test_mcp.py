@@ -43,7 +43,11 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(tools["workflow_observed"]["_meta"]["ui"]["visibility"], ["app"])
         self.assertEqual(tools["workflow_get"]["_meta"]["ui"]["visibility"], ["model", "app"])
         self.assertEqual(tools["workflow_usage"]["inputSchema"]["required"], ["runId"])
-        self.assertEqual(set(tools["workflow_usage"]["inputSchema"]["properties"]), {"runId"})
+        self.assertEqual(set(tools["workflow_usage"]["inputSchema"]["properties"]), {"runId", "view"})
+        for name in server.RUN_TOOLS:
+            schema = tools[name]["inputSchema"]
+            self.assertEqual(schema["properties"]["view"]["enum"], ["compact", "full"])
+            self.assertNotIn("view", schema["required"])
         self.assertEqual(tools["workflow_usage"]["_meta"]["ui"]["visibility"], ["model", "app"])
         self.assertTrue(tools["workflow_usage"]["annotations"]["readOnlyHint"])
         self.assertTrue(tools["workflow_usage"]["_meta"]["openai/widgetAccessible"])

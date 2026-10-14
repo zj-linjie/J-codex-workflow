@@ -41,6 +41,9 @@ STRING = {"type": "string"}
 SESSION_ID = {"type": "string", "minLength": 1, "maxLength": 128,
               "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
 INTEGER = {"type": "integer", "minimum": 0}
+RUN_TOOLS = frozenset({"workflow_create", "workflow_update_draft", "workflow_confirm",
+                       "workflow_event", "workflow_control", "workflow_get",
+                       "workflow_usage", "workflow_board"})
 PLAN = {
     "type": "object",
     "properties": {
@@ -63,6 +66,9 @@ PLAN = {
 
 def _tool(name: str, title: str, description: str, schema: Dict[str, Any], required: Any,
           visibility: Any, *, board: bool = False, read_only: bool = False) -> Dict[str, Any]:
+    if name in RUN_TOOLS:
+        schema = dict(schema, view={"type": "string", "enum": ["compact", "full"],
+                                   "description": "Response only: compact for model coordination; default full for compatibility and board reads."})
     widget_accessible = "model" not in visibility or "app" in visibility
     meta: Dict[str, Any] = {"ui": {"visibility": visibility},
                             "openai/widgetAccessible": widget_accessible}
@@ -138,6 +144,33 @@ def _content_result(value: Dict[str, Any], text: str) -> Dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "structuredContent": value}
 
 
+def _run_result(run: Dict[str, Any], text: str, view: str, *, usage: bool = False) -> Dict[str, Any]:
+    """Project a committed snapshot without changing Store/idempotency semantics."""
+    if view == "full":
+        return _content_result({"run": run}, text)
+    compact = {key: run[key] for key in ("id", "title", "status", "planVersion", "revision",
+                                        "pauseReason", "sessionId", "updatedAt")}
+    compact["view"] = "compact"
+    compact["tasks"] = [{"id": task["id"], "status": task["status"],
+                         "nativeId": task.get("nativeId"), "agentType": task.get("agentType"),
+                         "attempt": task.get("attempt", 1)} for task in run["tasks"]]
+    ready = []
+    if run["status"] == "running":
+        phases = {phase["id"]: index for index, phase in enumerate(run["phases"])}
+        done = {task["id"] for task in run["tasks"] if task["status"] == "done"}
+        for task in run["tasks"]:
+            if task["status"] != "pending" or any(dep not in done for dep in task["dependsOn"]):
+                continue
+            if any(phases[other["phaseId"]] < phases[task["phaseId"]] and other["id"] not in done
+                   for other in run["tasks"]):
+                continue
+            ready.append(task["id"])
+    compact["readyTaskIds"] = ready
+    if usage:
+        compact["usage"] = run["usage"]
+    return _content_result({"run": compact}, text)
+
+
 def _tool_error(message: str) -> Dict[str, Any]:
     return {"content": [{"type": "text", "text": message}], "isError": True}
 
@@ -198,39 +231,40 @@ def _call_tool(params: Any) -> Dict[str, Any]:
         _validate_schema(arguments, definitions[name]["inputSchema"], "arguments")
     except ValueError as error:
         return _tool_error(str(error))
+    view = arguments.get("view", "full")
     try:
         store = get_store()
         if name == "workflow_create":
             run = store.create(arguments.get("plan"), arguments.get("eventId"),
                                session_id=arguments.get("sessionId"))
-            return _content_result({"run": run}, "工作流草案已保存，等待用户确认。")
+            return _run_result(run, "工作流草案已保存，等待用户确认。", view)
         if name == "workflow_update_draft":
             run = store.update_draft(arguments.get("runId"), arguments.get("plan"),
                                      arguments.get("expectedRevision"), arguments.get("eventId"))
-            return _content_result({"run": run}, "工作流草案已更新，原确认不再适用。")
+            return _run_result(run, "工作流草案已更新，原确认不再适用。", view)
         if name == "workflow_confirm":
             run = store.confirm(arguments.get("runId"), arguments.get("expectedRevision"),
                                 arguments.get("eventId"), arguments.get("confirmation"))
-            return _content_result({"run": run}, "工作流已确认并进入执行状态。")
+            return _run_result(run, "工作流已确认并进入执行状态。", view)
         if name == "workflow_event":
             fields = {key: arguments[key] for key in ("nativeId", "agentType", "message", "summary", "artifacts", "acceptance") if key in arguments}
             run = store.task_event(arguments.get("runId"), arguments.get("taskId"), arguments.get("status"),
                                    arguments.get("expectedRevision"), arguments.get("eventId"), **fields)
-            return _content_result({"run": run}, "工作流任务状态已记录。")
+            return _run_result(run, "工作流任务状态已记录。", view)
         if name == "workflow_control":
             run = store.control(arguments.get("runId"), arguments.get("action"), arguments.get("reason"),
                                 arguments.get("expectedRevision"), arguments.get("eventId"),
                                 task_id=arguments.get("taskId"))
-            return _content_result({"run": run}, "工作流控制决定已记录。")
+            return _run_result(run, "工作流控制决定已记录。", view)
         if name == "workflow_get":
-            return _content_result({"run": store.get(arguments.get("runId"))}, "工作流状态已读取。")
+            return _run_result(store.get(arguments.get("runId")), "工作流状态已读取。", view)
         if name == "workflow_usage":
             run = store.capture_usage(arguments.get("runId"), collect_usage)
-            return _content_result({"run": run}, "工作流会话用量快照已读取。")
+            return _run_result(run, "工作流会话用量快照已读取。", view, usage=True)
         if name == "workflow_list":
             return _content_result({"runs": store.list_runs(arguments.get("limit", 20))}, "工作流运行列表已读取。")
         if name == "workflow_board":
-            return _content_result({"run": store.get(arguments.get("runId"))}, "正在显示指定工作流的只读看板。")
+            return _run_result(store.get(arguments.get("runId")), "正在显示指定工作流的只读看板。", view)
         if name == "workflow_observed":
             receipt = store.observed(arguments.get("runId"), arguments.get("clientId"), arguments.get("revision"),
                                      arguments.get("rendered"), arguments.get("visibility"))

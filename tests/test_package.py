@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -30,6 +31,12 @@ class PackageTests(unittest.TestCase):
             self.assertTrue((plugin / 'scripts/escalation_policy.py').is_file())
             self.assertTrue((plugin / 'mcp/usage.py').is_file())
             self.assertTrue((plugin / 'skills/codex-workflow/references/session-usage.md').is_file())
+            # Every relative skill reference must exist in the generated installable package.
+            skill_dir = plugin / 'skills/codex-workflow'
+            for document in skill_dir.rglob('*.md'):
+                for link in re.findall(r'\]\(([^)]+)\)', document.read_text()):
+                    if '://' not in link and not link.startswith('#'):
+                        self.assertTrue((document.parent / link.split('#')[0]).is_file(), (document, link))
             self.assertTrue((plugin / 'agent-profiles/WorkflowExpertAdvisor.toml').is_file())
             agent_destination = Path(directory) / 'installed-agents'
             subprocess.run([sys.executable, str(plugin / 'scripts/install_agents.py'),
@@ -43,7 +50,8 @@ class PackageTests(unittest.TestCase):
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18'}},
                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'},
                 {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': 'workflow_create', 'arguments': {'plan': plan, 'eventId': 'package-smoke-create'}}},
-                {'jsonrpc': '2.0', 'id': 4, 'method': 'resources/read', 'params': {'uri': 'ui://codex-workflow/board.html'}}]
+                {'jsonrpc': '2.0', 'id': 4, 'method': 'resources/read', 'params': {'uri': 'ui://codex-workflow/board.html'}},
+                {'jsonrpc': '2.0', 'id': 5, 'method': 'tools/call', 'params': {'name': 'workflow_create', 'arguments': {'plan': plan, 'eventId': 'package-smoke-create', 'view': 'compact'}}}]
             result = subprocess.run([config['command']] + config['args'], env=env,
                                     input=''.join(json.dumps(item) + '\n' for item in requests),
                                     capture_output=True, text=True, check=True, timeout=15)
@@ -52,6 +60,10 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(len(replies[1]['tools']), 10)
             self.assertEqual(replies[2]['structuredContent']['run']['status'], 'draft')
             self.assertIn('J-codex-workflow', replies[3]['contents'][0]['text'])
+            compact = replies[4]['structuredContent']['run']
+            self.assertEqual(compact['id'], replies[2]['structuredContent']['run']['id'])
+            self.assertEqual(compact['view'], 'compact')
+            self.assertNotIn('roles', compact)
             with zipfile.ZipFile(report['archive']) as archive:
                 self.assertIn('codex-workflow/.mcp.json', archive.namelist())
                 self.assertIn('codex-workflow/docs/CONTRACT.md', archive.namelist())

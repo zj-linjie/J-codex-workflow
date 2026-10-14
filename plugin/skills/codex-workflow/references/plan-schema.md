@@ -31,6 +31,7 @@ Use this reference when creating or revising the `plan` passed to `workflow_crea
 - For newly drafted native roles, specify `agentType` as the loaded native profile name (up to 64 identifier characters). Primary roles must omit it. The API accepts old plans without it for compatibility; the skill updates old drafts before new dispatch. A bound task's running event must report the matching agentType. Later status events omit it.
 - Keep dependencies acyclic. A task may depend only on tasks in its phase or an earlier phase. A later phase becomes runnable only after all earlier-phase tasks are accepted as done.
 - Contract limits: at most 32 roles, 12 phases, and 64 tasks. See `docs/CONTRACT.md` for the exact field-level length and validation requirements.
-- Acceptance criteria must be observable from the returned artifact or work. Separate implementation from review when independent review is part of the user's goal.
+- A simple task can be a single primary role performed by the main agent. At draft time, include an independent review when the user requests one or task complexity or material risk warrants it. Keep the requested review and its observable acceptance criteria in the confirmed plan.
+- Acceptance criteria must be observable from the returned artifact or work. Make task instructions bounded to their approved responsibility and name expected artifacts.
 
 The JSON files in `examples/` are complete plan objects suitable for exercising draft creation and state transitions.
