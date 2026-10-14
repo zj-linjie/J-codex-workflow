@@ -18,7 +18,11 @@ def build(output):
     package = output / 'marketplace' / 'plugins' / 'codex-workflow'
     source = ROOT / 'plugin'
     required = ['.codex-plugin/plugin.json', 'mcp/server.py', 'mcp/store.py',
-                'ui/board.html', 'skills/codex-workflow/SKILL.md']
+                'ui/board.html', 'skills/codex-workflow/SKILL.md',
+                'scripts/install_agents.py', 'scripts/escalation_policy.py',
+                'settings/orchestrator.json']
+    required += ['agent-profiles/Workflow' + name + '.toml'
+                 for name in ('Explorer', 'Executor', 'Reviewer', 'ExpertAdvisor')]
     for name in required:
         if not (source / name).is_file():
             raise ValueError('Missing package file: ' + name)

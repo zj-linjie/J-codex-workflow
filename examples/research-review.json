@@ -6,13 +6,15 @@
       "id": "researcher",
       "name": "调研员",
       "kind": "native",
-      "instructions": "针对分配的问题查找高质量一手材料，区分事实与推断，记录可核查来源、日期和未解决的不确定性。只提交研究结果与来源引用，不替主代理作最终结论。"
+      "instructions": "针对分配的问题查找高质量一手材料，区分事实与推断，记录可核查来源、日期和未解决的不确定性。只提交研究结果与来源引用，不替主代理作最终结论。",
+      "agentType": "WorkflowExpertAdvisor"
     },
     {
       "id": "reviewer",
       "name": "独立评审员",
       "kind": "native",
-      "instructions": "独立检查研究结果中的关键主张、来源是否支持主张、反例与遗漏。给出通过或不通过及具体依据，不改写或代替主代理验收。"
+      "instructions": "独立检查研究结果中的关键主张、来源是否支持主张、反例与遗漏。给出通过或不通过及具体依据，不改写或代替主代理验收。",
+      "agentType": "WorkflowReviewer"
     },
     {
       "id": "lead",
@@ -22,9 +24,18 @@
     }
   ],
   "phases": [
-    {"id": "research", "name": "并行调研"},
-    {"id": "review", "name": "独立复核"},
-    {"id": "synthesis", "name": "主代理综合"}
+    {
+      "id": "research",
+      "name": "并行调研"
+    },
+    {
+      "id": "review",
+      "name": "独立复核"
+    },
+    {
+      "id": "synthesis",
+      "name": "主代理综合"
+    }
   ],
   "tasks": [
     {
@@ -48,7 +59,10 @@
       "name": "复核研究证据",
       "roleId": "reviewer",
       "phaseId": "review",
-      "dependsOn": ["research_options", "research_risks"],
+      "dependsOn": [
+        "research_options",
+        "research_risks"
+      ],
       "acceptanceCriteria": "逐项检查关键主张和来源支持度；明确给出通过或不通过，且不通过时指出具体缺口。"
     },
     {
@@ -56,7 +70,9 @@
       "name": "形成并验收建议",
       "roleId": "lead",
       "phaseId": "synthesis",
-      "dependsOn": ["review_evidence"],
+      "dependsOn": [
+        "review_evidence"
+      ],
       "acceptanceCriteria": "建议回答原始目标，比较方案与取舍，纳入通过复核的证据，并说明不确定性和未覆盖事项。"
     }
   ]

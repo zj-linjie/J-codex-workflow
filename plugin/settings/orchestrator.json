@@ -1,0 +1,9 @@
+{
+  "astraConsultation": {
+    "enabled": true,
+    "afterFailures": 2,
+    "maxPerIncident": 1,
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high"
+  }
+}

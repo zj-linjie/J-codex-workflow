@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import pathlib
 import sys
@@ -88,6 +89,92 @@ class StoreTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowError, "later phase"):
             validate_plan(plan)
 
+    def test_role_agent_type_binding_is_native_only_and_survives_plan_updates_and_restart(self):
+        plan = sample_plan()
+        plan["roles"][0]["agentType"] = "gpt-6.1-sol"
+        run = self.create("bound-create", plan)
+        self.assertEqual(run["roles"][0]["agentType"], "gpt-6.1-sol")
+
+        revised_plan = sample_plan()
+        revised_plan["roles"][0]["agentType"] = "research_agent.v2"
+        updated = self.store.update_draft(run["id"], revised_plan, run["revision"], "bound-update")
+        restarted = Store(self.db_path).get(run["id"])
+        self.assertEqual(updated["roles"][0]["agentType"], "research_agent.v2")
+        self.assertEqual(restarted["roles"][0]["agentType"], "research_agent.v2")
+
+        invalid = sample_plan()
+        invalid["roles"][0]["agentType"] = "invalid type"
+        with self.assertRaisesRegex(WorkflowError, "agentType must use"):
+            validate_plan(invalid)
+        invalid = sample_plan()
+        invalid["roles"][1]["agentType"] = "agent-x"
+        with self.assertRaisesRegex(WorkflowError, "only valid for native"):
+            validate_plan(invalid)
+
+    def test_bound_native_start_requires_exact_agent_type_and_rejections_are_atomic(self):
+        plan = sample_plan()
+        plan["roles"][0]["agentType"] = "research-agent"
+        run = self.start_run(self.create("bound-start-create", plan))
+        for event_id, supplied in (("bound-missing", {}), ("bound-wrong", {"agentType": "other-agent"})):
+            with self.subTest(event_id=event_id):
+                before = self.store.get(run["id"])
+                with self.assertRaisesRegex(WorkflowError, "agentType"):
+                    self.store.task_event(run["id"], "t1", "running", before["revision"], event_id,
+                                          nativeId="native-1", **supplied)
+                after = self.store.get(run["id"])
+                self.assertEqual(after["revision"], before["revision"])
+                self.assertEqual(after["tasks"][0]["status"], "pending")
+                self.assertEqual(after["events"], before["events"])
+
+        run = self.store.task_event(run["id"], "t1", "running", run["revision"], "bound-correct",
+                                    nativeId="native-1", agentType="research-agent")
+        self.assertEqual(run["tasks"][0]["agentType"], "research-agent")
+        with self.assertRaisesRegex(WorkflowError, "not valid for submitted"):
+            self.store.task_event(run["id"], "t1", "submitted", run["revision"], "agent-type-on-submit",
+                                  summary="结果", agentType="research-agent")
+        self.assertEqual(self.store.get(run["id"])["revision"], run["revision"])
+
+    def test_primary_running_rejects_agent_type_and_native_id(self):
+        plan = sample_plan()
+        plan["tasks"][0]["roleId"] = "owner"
+        run = self.start_run(self.create("primary-start-create", plan))
+        for event_id, fields, message in (
+            ("primary-agent-type", {"agentType": "research-agent"}, "agentType"),
+            ("primary-native-id", {"nativeId": "native-1"}, "nativeId"),
+        ):
+            with self.subTest(event_id=event_id):
+                before = self.store.get(run["id"])
+                with self.assertRaisesRegex(WorkflowError, message):
+                    self.store.task_event(run["id"], "t1", "running", before["revision"], event_id, **fields)
+                after = self.store.get(run["id"])
+                self.assertEqual(after["revision"], before["revision"])
+                self.assertEqual(after["tasks"][0]["status"], "pending")
+
+    def test_legacy_plan_and_task_state_without_agent_type_remain_compatible(self):
+        run = self.create("legacy-create")
+        # Recreate the persisted shape written by versions before agentType existed.
+        with self.store._connection() as db:
+            row = db.execute("SELECT task_state_json FROM runs WHERE id=?", (run["id"],)).fetchone()
+            states = json.loads(row["task_state_json"])
+            for state in states.values():
+                state.pop("agentType", None)
+            db.execute("UPDATE runs SET task_state_json=? WHERE id=?",
+                       (json.dumps(states), run["id"]))
+            db.commit()
+
+        restarted = Store(self.db_path)
+        legacy = restarted.get(run["id"])
+        self.assertNotIn("agentType", legacy["roles"][0])
+        self.assertIsNone(legacy["tasks"][0]["agentType"])
+        legacy = restarted.confirm(run["id"], legacy["revision"], "legacy-confirm", "确认旧计划")
+        legacy = restarted.task_event(legacy["id"], "t1", "running", legacy["revision"], "legacy-start",
+                                      nativeId="legacy-native")
+        self.assertEqual(legacy["tasks"][0]["status"], "running")
+        self.assertIsNone(legacy["tasks"][0]["agentType"])
+        legacy = restarted.task_event(legacy["id"], "t1b", "running", legacy["revision"], "legacy-bound-at-start",
+                                      nativeId="legacy-native-2", agentType="custom-agent")
+        self.assertEqual(legacy["tasks"][1]["agentType"], "custom-agent")
+
     def test_draft_update_revision_confirmation_and_phase_gate(self):
         draft = self.create()
         self.assertEqual((draft["status"], draft["planVersion"], draft["revision"]), ("draft", 1, 0))
@@ -136,9 +223,13 @@ class StoreTests(unittest.TestCase):
             self.store.task_event(run["id"], "t2", "failed", run["revision"], "after-complete", message="late")
 
     def test_failure_pauses_and_only_explicit_retry_or_resume_continues(self):
-        run = self.start_run(self.create())
-        run = self.store.task_event(run["id"], "t1", "running", run["revision"], "s1", nativeId="native-1")
-        run = self.store.task_event(run["id"], "t1b", "running", run["revision"], "s2", nativeId="native-2")
+        plan = sample_plan()
+        plan["roles"][0]["agentType"] = "research-agent"
+        run = self.start_run(self.create(plan=plan))
+        run = self.store.task_event(run["id"], "t1", "running", run["revision"], "s1", nativeId="native-1",
+                                    agentType="research-agent")
+        run = self.store.task_event(run["id"], "t1b", "running", run["revision"], "s2", nativeId="native-2",
+                                    agentType="research-agent")
         run = self.store.task_event(run["id"], "t1", "failed", run["revision"], "fail-1", message="来源无法验证")
         self.assertEqual((run["status"], run["pauseReason"]), ("paused", "来源无法验证"))
         with self.assertRaisesRegex(WorkflowError, "cannot start"):
@@ -153,9 +244,13 @@ class StoreTests(unittest.TestCase):
         self.assertEqual((run["status"], run["pauseReason"]), ("running", None))
         retried = next(task for task in run["tasks"] if task["id"] == "t1")
         self.assertEqual((retried["status"], retried["attempt"], retried["nativeId"]), ("pending", 2, None))
-        run = self.store.task_event(run["id"], "t1", "running", run["revision"], "retry-start", nativeId="native-1b")
+        self.assertIsNone(retried["agentType"])
+        self.assertEqual(next(role for role in run["roles"] if role["id"] == "analyst")["agentType"], "research-agent")
+        run = self.store.task_event(run["id"], "t1", "running", run["revision"], "retry-start", nativeId="native-1b",
+                                    agentType="research-agent")
         retried = next(task for task in run["tasks"] if task["id"] == "t1")
-        self.assertEqual((retried["status"], retried["attempt"], retried["nativeId"]), ("running", 2, "native-1b"))
+        self.assertEqual((retried["status"], retried["attempt"], retried["nativeId"], retried["agentType"]),
+                         ("running", 2, "native-1b", "research-agent"))
 
         run = self.store.control(run["id"], "pause", "用户决定暂停核对", run["revision"], "manual-pause")
         run = self.store.control(run["id"], "resume", "用户明确决定继续", run["revision"], "manual-resume")

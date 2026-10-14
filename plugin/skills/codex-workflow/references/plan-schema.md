@@ -9,7 +9,7 @@ Use this reference when creating or revising the `plan` passed to `workflow_crea
   "title": "Short run title",
   "goal": "Observable outcome",
   "roles": [
-    {"id": "researcher", "name": "Researcher", "kind": "native", "instructions": "Task-specific brief"},
+    {"id": "researcher", "name": "Researcher", "kind": "native", "agentType": "WorkflowExpertAdvisor", "instructions": "Task-specific brief"},
     {"id": "lead", "name": "Main agent", "kind": "primary", "instructions": "Synthesize and accept the result"}
   ],
   "phases": [
@@ -28,6 +28,7 @@ Use this reference when creating or revising the `plan` passed to `workflow_crea
 - `title`, `goal`, names, instructions, and acceptance criteria are non-empty strings within the limits enforced by the contract.
 - Keep role, phase, and task IDs unique. Every task references an existing role and phase; every phase contains at least one task.
 - Use only `native` and `primary` role kinds. Native roles are dispatched by the main agent through Codex collaboration; primary roles are performed by the main agent.
+- For newly drafted native roles, specify `agentType` as the loaded native profile name (up to 64 identifier characters). Primary roles must omit it. The API accepts old plans without it for compatibility; the skill updates old drafts before new dispatch. A bound task's running event must report the matching agentType. Later status events omit it.
 - Keep dependencies acyclic. A task may depend only on tasks in its phase or an earlier phase. A later phase becomes runnable only after all earlier-phase tasks are accepted as done.
 - Contract limits: at most 32 roles, 12 phases, and 64 tasks. See `docs/CONTRACT.md` for the exact field-level length and validation requirements.
 - Acceptance criteria must be observable from the returned artifact or work. Separate implementation from review when independent review is part of the user's goal.

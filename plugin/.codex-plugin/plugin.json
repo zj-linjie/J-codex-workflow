@@ -1,6 +1,6 @@
 {
   "name": "codex-workflow",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "先确认角色与阶段，再用 Codex 原生子代理执行，并在会话内查看动态进度。",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

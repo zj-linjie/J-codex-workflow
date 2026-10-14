@@ -34,6 +34,9 @@ class MCPTests(unittest.TestCase):
             "workflow_create", "workflow_update_draft", "workflow_confirm", "workflow_event",
             "workflow_control", "workflow_get", "workflow_list", "workflow_board", "workflow_observed"})
         self.assertEqual(tools["workflow_create"]["inputSchema"]["required"], ["plan", "eventId"])
+        role_properties = tools["workflow_create"]["inputSchema"]["properties"]["plan"]["properties"]["roles"]["items"]["properties"]
+        self.assertIn("agentType", role_properties)
+        self.assertIn("agentType", tools["workflow_event"]["inputSchema"]["properties"])
         self.assertEqual(tools["workflow_confirm"]["_meta"]["ui"]["visibility"], ["model"])
         self.assertEqual(tools["workflow_observed"]["_meta"]["ui"]["visibility"], ["app"])
         self.assertEqual(tools["workflow_get"]["_meta"]["ui"]["visibility"], ["model", "app"])
@@ -71,6 +74,27 @@ class MCPTests(unittest.TestCase):
         self.assertTrue(unknown["isError"])
         listed = self.tool_call("workflow_list", {})["structuredContent"]["runs"]
         self.assertEqual({item["id"] for item in listed}, {run["id"], other["id"]})
+
+    def test_mcp_create_update_and_running_event_carry_agent_type_binding(self):
+        plan = sample_plan()
+        plan["roles"][0]["agentType"] = "research-v1"
+        created = self.tool_call("workflow_create", {"plan": plan, "eventId": "agent-create"})
+        run = created["structuredContent"]["run"]
+        self.assertEqual(run["roles"][0]["agentType"], "research-v1")
+
+        plan["roles"][0]["agentType"] = "research-v2"
+        updated = self.tool_call("workflow_update_draft", {"runId": run["id"], "plan": plan,
+                                                            "expectedRevision": run["revision"],
+                                                            "eventId": "agent-update"})
+        run = updated["structuredContent"]["run"]
+        self.assertEqual(run["roles"][0]["agentType"], "research-v2")
+        run = self.tool_call("workflow_confirm", {"runId": run["id"], "expectedRevision": run["revision"],
+                                                  "eventId": "agent-confirm", "confirmation": "用户确认"})["structuredContent"]["run"]
+        started = self.tool_call("workflow_event", {"runId": run["id"], "taskId": "t1", "status": "running",
+                                                      "nativeId": "native-1", "agentType": "research-v2",
+                                                      "expectedRevision": run["revision"], "eventId": "agent-start"})
+        self.assertNotIn("isError", started)
+        self.assertEqual(started["structuredContent"]["run"]["tasks"][0]["agentType"], "research-v2")
 
     def test_observed_is_app_tool_and_does_not_advance_revision(self):
         run = self.store.create(sample_plan(), "create-receipt")
