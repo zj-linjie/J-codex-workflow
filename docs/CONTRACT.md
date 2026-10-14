@@ -13,7 +13,13 @@ Python 3.9+ 标准库。SQLite 数据默认在 `~/.local/share/codex-workflow/wo
 
 字段上限（字符数）：title 120、goal 4000、role.name 80、role.instructions 8000、phase.name 100、task.name 160、acceptanceCriteria 2000、nativeId 256、message/summary/acceptance 4000、confirmation/reason 2000、eventId/clientId 128。计划 ID 最长64，使用字母数字开头及字母数字点下划线连字符；runId 最长128，另允许冒号。artifacts 最多32项，每项2048；list limit 1–100。
 
-状态统一返回 `{run: {...}}`。run 包含 `id,title,goal,planVersion,revision,status,roles,phases,tasks,events,createdAt,updatedAt,pauseReason`。时间 ISO UTC 字符串。roles/phases 保留计划字段；tasks 计划字段加 `status,nativeId,agentType,message,summary,artifacts,acceptance,attempt`。events 最近 100 条。phase 进度由 UI 从 task 计算。
+状态统一返回 `{run: {...}}`。默认完整视图的 run 包含 `id,title,goal,planVersion,revision,status,roles,phases,tasks,events,createdAt,updatedAt,pauseReason`。时间 ISO UTC 字符串。roles/phases 保留计划字段；tasks 计划字段加 `status,nativeId,agentType,message,summary,artifacts,acceptance,attempt`。events 最近 100 条。phase 进度由 UI 从 task 计算。
+
+返回 run 的八个工具（create/update_draft/confirm/event/control/get/usage/board）接受可选 `view: "compact" | "full"`，缺省 `full` 保持旧调用兼容。它只改变 MCP 返回投影，不传入 Store、不计入幂等操作指纹；非法 view 在操作前拒绝。相同事件可用不同 view 重放，但仍返回该事件原来提交的版本，不能把幂等重放当作最新状态。
+
+compact run 固定包含 `id,title,status,planVersion,revision,pauseReason,sessionId,updatedAt,view:"compact",tasks,readyTaskIds`。tasks 每项只含 `id,status,nativeId,agentType,attempt`，省略角色指令、计划细节、长结果、验收说明、产物引用和事件历史；这些仍保存在完整视图中。readyTaskIds 只在 running 时列出 pending 且依赖与全部前序阶段均已 done 的任务，其他运行状态为空；它是当前快照中的就绪提示，不代替用户确认、原生身份核对、并发限制或写入版本校验。只有 `workflow_usage` 的 compact 结果额外带 usage；其他 compact 调用不会回传已保存的统计。
+
+新版技能的正常模型调用显式选择 compact，并复用成功写入返回的版本与状态；只有冲突、结果不确定、其他写入或上下文恢复时重新读取。丢失计划/验收证据时读取 full；精简状态不能代替计划或验收证据。`workflow_board` 可用 compact 绑定运行 ID，页面随后以缺省 full 读取；现有页面无需更改。Store Python 接口始终返回完整 run。
 
 MCP 工具/本地 Python Store 对应（工作流状态写入需 eventId 唯一字符串；create 外需 expectedRevision 非负整数，派生统计与呈现回执除外）：
 
