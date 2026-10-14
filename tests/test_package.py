@@ -28,6 +28,8 @@ class PackageTests(unittest.TestCase):
             self.assertTrue((plugin / 'examples/research-review.json').is_file())
             self.assertTrue((plugin / 'settings/orchestrator.json').is_file())
             self.assertTrue((plugin / 'scripts/escalation_policy.py').is_file())
+            self.assertTrue((plugin / 'mcp/usage.py').is_file())
+            self.assertTrue((plugin / 'skills/codex-workflow/references/session-usage.md').is_file())
             self.assertTrue((plugin / 'agent-profiles/WorkflowExpertAdvisor.toml').is_file())
             agent_destination = Path(directory) / 'installed-agents'
             subprocess.run([sys.executable, str(plugin / 'scripts/install_agents.py'),
@@ -47,7 +49,7 @@ class PackageTests(unittest.TestCase):
                                     capture_output=True, text=True, check=True, timeout=15)
             self.assertEqual(result.stderr, '')
             replies = [json.loads(line)['result'] for line in result.stdout.splitlines()]
-            self.assertEqual(len(replies[1]['tools']), 9)
+            self.assertEqual(len(replies[1]['tools']), 10)
             self.assertEqual(replies[2]['structuredContent']['run']['status'], 'draft')
             self.assertIn('J-codex-workflow', replies[3]['contents'][0]['text'])
             with zipfile.ZipFile(report['archive']) as archive:

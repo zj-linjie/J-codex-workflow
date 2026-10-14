@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vloHtgDRMn3xPDfHfdCy5Emd3Yw8eWRqnq3+zHkel7E='; style-src 'sha256-v7uWrouDT+zIwR0WP/HsnroWWlPZUyr3RVEoi9ZjBxk='; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-PyEXN2dKhdC6e8efGWHRYU/W4nqIWe8pJ8otk1UsjDw='; style-src 'sha256-u4PehDAvMLOIbsm1/GeXNwX0W+pIWNDY8bVmkL8iHYY='; img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>J-codex-workflow</title>
   <style>
     :root {
@@ -142,6 +142,21 @@
       .phase { width: 260px; }
       .counts { margin-left: 0; }
     }
+    .usage { margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+    .usage h2 { margin: 0; font-size: 13px; }
+    .usage-note { margin: 6px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+    .usage-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+    .usage-metric span { display: block; color: var(--muted); font-size: 11px; }
+    .usage-metric strong { display: block; font-size: 18px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .usage details { margin-top: 10px; }
+    .usage summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    .usage-scroll { overflow-x: auto; margin-top: 8px; }
+    .usage table { border-collapse: collapse; width: 100%; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .usage th, .usage td { border-bottom: 1px solid var(--line); padding: 7px 9px; text-align: right; white-space: nowrap; }
+    .usage th:first-child, .usage td:first-child { text-align: left; }
+    .usage th { color: var(--muted); font-weight: 500; }
+    .usage button { margin-top: 10px; color: var(--text); background: var(--card-quiet); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    @media (max-width: 550px) { .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
@@ -167,6 +182,12 @@
       <ol id="phases" class="track" aria-label="工作流阶段"></ol>
     </section>
     <div id="loading" class="loading"><div><strong>等待工作流信息</strong><span>此卡片只读取与当前入口绑定的运行。</span></div></div>
+    <section id="usage" class="usage" aria-labelledby="usage-title" hidden>
+      <h2 id="usage-title">会话用量与速率</h2>
+      <p id="usage-state" class="usage-note" role="status" aria-live="polite"></p>
+      <div id="usage-content"></div>
+      <button id="usage-retry" type="button" hidden>重试读取统计</button>
+    </section>
     <footer class="footer">
       <span id="connection" class="live" role="status" aria-live="polite">正在初始化宿主连接</span>
       <span id="freshness">尚未同步状态</span>
@@ -182,13 +203,14 @@
       const ui = {
         title: $("workflow-title"), goal: $("goal"), badge: $("run-status"), note: $("run-note"), counts: $("counts"),
         banner: $("banner"), phases: $("phases"), loading: $("loading"), connection: $("connection"),
-        freshness: $("freshness")
+        freshness: $("freshness"), usage: $("usage"), usageState: $("usage-state"),
+        usageContent: $("usage-content"), usageRetry: $("usage-retry")
       };
       const state = {
         nextRpcId: 1, pending: new Map(), clientId: "codex-workflow-ui-" + Math.random().toString(36).slice(2, 10),
         runId: null, run: null, revision: null, observedRevision: null, lastSuccessAt: 0, serverUpdatedAt: "",
         pollTimer: 0, freshnessTimer: 0, requestInFlight: false, hostReady: false, stopped: false,
-        identityFailed: false, closed: false, lastError: ""
+        identityFailed: false, closed: false, lastError: "", usageInFlight: false
       };
       const taskLabels = {
         pending: "待处理", running: "执行中", submitted: "待验收", done: "已完成", failed: "失败", cancelled: "已取消"
@@ -405,6 +427,112 @@
         if (Number.isNaN(date.getTime())) return "未知";
         return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
       }
+      function usageNumber(value, decimals = 0) {
+        return typeof value === "number" && Number.isFinite(value)
+          ? new Intl.NumberFormat("zh-CN", { maximumFractionDigits: decimals }).format(value) : "—";
+      }
+      function usageTable(rows, sessions = false) {
+        const wrap = document.createElement("div");
+        wrap.className = "usage-scroll";
+        wrap.tabIndex = 0;
+        wrap.setAttribute("aria-label", sessions ? "会话统计明细，可横向滚动" : "模型统计明细，可横向滚动");
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const header = document.createElement("tr");
+        for (const label of [sessions ? "角色 / 模型" : "模型", "总 token", "输入", "缓存输入", "输出", "推理输出", "均速 t/s", "P10–P90", "速率样本"]) {
+          const th = document.createElement("th");
+          th.scope = "col";
+          th.textContent = label;
+          header.append(th);
+        }
+        head.append(header);
+        const body = document.createElement("tbody");
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          const speed = row.speed;
+          const label = sessions ? (row.agentRole || "未知角色") + " / " + row.model + " · " + String(row.sessionId || "").slice(0, 8) : row.model;
+          const values = [label, usageNumber(row.totalTokens), usageNumber(row.inputTokens), usageNumber(row.cachedInputTokens),
+            usageNumber(row.outputTokens), usageNumber(row.reasoningOutputTokens), usageNumber(speed?.meanTokensPerSecond, 1),
+            speed ? usageNumber(speed.p10TokensPerSecond, 1) + "–" + usageNumber(speed.p90TokensPerSecond, 1) : "—", usageNumber(speed?.samples)];
+          for (const value of values) {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.append(td);
+          }
+          body.append(tr);
+        }
+        table.append(head, body);
+        wrap.append(table);
+        return wrap;
+      }
+      function renderUsage(report) {
+        ui.usageContent.replaceChildren();
+        ui.usageRetry.hidden = true;
+        if (!report) {
+          ui.usageState.textContent = "正在生成本地统计快照…";
+          return;
+        }
+        const label = { available: "已采集", partial: "部分记录可用", unavailable: "统计不可用" }[report.status] || "统计不可用";
+        const coverage = report.coverage || {};
+        ui.usageState.textContent = label + " · 当前主会话及子代理累计 · 采集于 " + formatTime(report.capturedAt);
+        const total = report.totals;
+        if (!total) {
+          const note = document.createElement("p");
+          note.className = "usage-note";
+          note.textContent = report.notes?.includes("missing_session_id") ? "此运行未绑定会话，无法生成累计统计。" : "未取得本地用量记录；缺失记录不记为零。";
+          ui.usageContent.append(note);
+          return;
+        }
+        const metrics = document.createElement("div");
+        metrics.className = "usage-metrics";
+        for (const [name, value] of [["累计 token", usageNumber(total.totalTokens)], ["输出 token", usageNumber(total.outputTokens)],
+          ["响应平均速率 · t/s", usageNumber(report.speed?.meanTokensPerSecond, 1)], ["已统计 / 发现会话", usageNumber(coverage.sessionsWithUsage) + " / " + usageNumber(coverage.sessionsFound)]]) {
+          const item = document.createElement("div");
+          item.className = "usage-metric";
+          const title = document.createElement("span");
+          title.textContent = name;
+          const valueText = document.createElement("strong");
+          valueText.textContent = value;
+          item.append(title, valueText);
+          metrics.append(item);
+        }
+        ui.usageContent.append(metrics, usageTable(report.models || []));
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "查看主会话与子代理明细";
+        details.append(summary, usageTable(report.sessions || [], true));
+        const note = document.createElement("p");
+        note.className = "usage-note";
+        note.textContent = "总量 = 输入（含缓存）+ 输出（含推理）。速率为响应间隔扣除工具时间后的样本均值，含排队与预填充；无有效样本显示 —。快照仅含采集时已落盘记录，包含本工作流之前的会话用量。";
+        ui.usageContent.append(details, note);
+        if (report.status === "partial") {
+          const warning = document.createElement("p");
+          warning.className = "usage-note";
+          warning.textContent = "部分会话、用量事件或记录无法读取，当前数字仅覆盖已取得的记录。";
+          ui.usageContent.append(warning);
+        }
+      }
+      async function loadUsage() {
+        if (state.usageInFlight || state.closed || state.identityFailed || state.run?.status !== "completed") return;
+        state.usageInFlight = true;
+        renderUsage(null);
+        try {
+          const result = await rpc("tools/call", { name: "workflow_usage", arguments: { runId: state.runId } }, 30000);
+          if (state.closed) return;
+          const run = resultRun(result);
+          if (result?.isError || !run || !run.usage) throw new Error("统计暂不可用");
+          if (run.id !== state.runId) throw new Error("统计运行不匹配");
+          state.run.usage = run.usage;
+          renderUsage(run.usage);
+        } catch (error) {
+          if (state.closed) return;
+          ui.usageState.textContent = "统计暂时无法读取；工作流验收状态不受影响。";
+          ui.usageRetry.hidden = false;
+        } finally {
+          state.usageInFlight = false;
+        }
+      }
+      ui.usageRetry.addEventListener("click", loadUsage);
       function render(run) {
         const expandedTaskIds = new Set([...ui.phases.querySelectorAll(".task[open][data-task-id]")].map((task) => task.dataset.taskId));
         const activeElement = document.activeElement;
@@ -438,6 +566,11 @@
         ui.freshness.className = "";
         ui.freshness.textContent = "刚刚同步 · 服务端更新 " + formatTime(state.serverUpdatedAt);
         setBanner("");
+        ui.usage.hidden = status !== "completed";
+        if (status === "completed") {
+          renderUsage(run.usage);
+          if (!run.usage) void loadUsage();
+        }
         if (status === "completed" || status === "cancelled") {
           state.stopped = true;
           setConnection(status === "completed" ? "已完成 · 自动同步已停止" : "已取消 · 自动同步已停止", "live");
@@ -548,7 +681,7 @@
         }
         try {
           const host = await rpc("ui/initialize", {
-            appInfo: { name: "codex-workflow-board", version: "0.2.0" },
+            appInfo: { name: "codex-workflow-board", version: "0.3.0" },
             appCapabilities: {},
             protocolVersion: "2026-01-26"
           });

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import sys
 from typing import Any, Dict, Optional
 
@@ -37,6 +38,8 @@ def _object_schema(properties: Dict[str, Any], required: Any) -> Dict[str, Any]:
 
 
 STRING = {"type": "string"}
+SESSION_ID = {"type": "string", "minLength": 1, "maxLength": 128,
+              "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
 INTEGER = {"type": "integer", "minimum": 0}
 PLAN = {
     "type": "object",
@@ -95,8 +98,8 @@ def tools_list() -> Dict[str, Any]:
     both = ["model", "app"]
     app = ["app"]
     return {"tools": [
-        _tool("workflow_create", "创建工作流草案", "保存经过严格校验的工作流草案；不会开始执行。",
-              {"plan": PLAN, "eventId": STRING}, ["plan", "eventId"], model),
+        _tool("workflow_create", "创建工作流草案", "保存经过严格校验的工作流草案；不会开始执行。可选 sessionId 用于关联本机 Codex 会话。",
+              {"plan": PLAN, "eventId": STRING, "sessionId": SESSION_ID}, ["plan", "eventId"], model),
         _tool("workflow_update_draft", "修改工作流草案", "修改未确认的草案并提升计划版本。",
               {"runId": STRING, "plan": PLAN, "expectedRevision": INTEGER, "eventId": STRING},
               ["runId", "plan", "expectedRevision", "eventId"], model),
@@ -115,6 +118,8 @@ def tools_list() -> Dict[str, Any]:
                "reason": STRING, "taskId": STRING, "expectedRevision": INTEGER, "eventId": STRING},
               ["runId", "action", "reason", "expectedRevision", "eventId"], model),
         _tool("workflow_get", "读取工作流运行", "读取指定 runId 的持久状态与最近事件。",
+              {"runId": STRING}, ["runId"], both, read_only=True),
+        _tool("workflow_usage", "读取工作流会话用量", "读取已完成运行的本机会话用量派生快照；首次读取时只持久化统计摘要，不保存会话原始内容。",
               {"runId": STRING}, ["runId"], both, read_only=True),
         _tool("workflow_list", "列出工作流运行", "列出本机最近的工作流运行摘要。",
               {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}, [], model, read_only=True),
@@ -162,6 +167,12 @@ def _validate_schema(value: Any, schema: Dict[str, Any], where: str) -> None:
     elif kind == "string":
         if not isinstance(value, str):
             raise ValueError(where + " must be a string")
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise ValueError(where + " is shorter than its minimum length")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise ValueError(where + " is longer than its maximum length")
+        if "pattern" in schema and re.fullmatch(schema["pattern"], value) is None:
+            raise ValueError(where + " has an invalid format")
     elif kind == "integer":
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(where + " must be an integer")
@@ -190,7 +201,8 @@ def _call_tool(params: Any) -> Dict[str, Any]:
     try:
         store = get_store()
         if name == "workflow_create":
-            run = store.create(arguments.get("plan"), arguments.get("eventId"))
+            run = store.create(arguments.get("plan"), arguments.get("eventId"),
+                               session_id=arguments.get("sessionId"))
             return _content_result({"run": run}, "工作流草案已保存，等待用户确认。")
         if name == "workflow_update_draft":
             run = store.update_draft(arguments.get("runId"), arguments.get("plan"),
@@ -212,6 +224,9 @@ def _call_tool(params: Any) -> Dict[str, Any]:
             return _content_result({"run": run}, "工作流控制决定已记录。")
         if name == "workflow_get":
             return _content_result({"run": store.get(arguments.get("runId"))}, "工作流状态已读取。")
+        if name == "workflow_usage":
+            run = store.capture_usage(arguments.get("runId"), collect_usage)
+            return _content_result({"run": run}, "工作流会话用量快照已读取。")
         if name == "workflow_list":
             return _content_result({"runs": store.list_runs(arguments.get("limit", 20))}, "工作流运行列表已读取。")
         if name == "workflow_board":
@@ -227,6 +242,15 @@ def _call_tool(params: Any) -> Dict[str, Any]:
         return _tool_error("The workflow store could not complete the operation.")
 
 
+def collect_usage(session_id: Optional[str]) -> Dict[str, Any]:
+    """Load the local session usage collector only when the usage tool is called."""
+    try:
+        from .usage import collect_usage as collector
+    except ImportError:  # pragma: no cover - direct script execution
+        from usage import collect_usage as collector
+    return collector(session_id)
+
+
 def respond(method: str, params: Any = None) -> Dict[str, Any]:
     """Handle a single MCP request; raises ValueError for malformed parameters."""
     params = {} if params is None else params
@@ -236,7 +260,7 @@ def respond(method: str, params: Any = None) -> Dict[str, Any]:
         return {"protocolVersion": params.get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}, "resources": {},
                                  "extensions": {"io.modelcontextprotocol/ui": {}}},
-                "serverInfo": {"name": "codex-workflow", "version": "0.2.0"}}
+                "serverInfo": {"name": "codex-workflow", "version": "0.3.0"}}
     if method == "ping":
         return {}
     if method == "tools/list":
